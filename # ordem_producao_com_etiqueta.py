@@ -35,6 +35,8 @@ from psycopg2 import errors
 
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
 
 
 # ============================================================

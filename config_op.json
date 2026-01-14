@@ -1,0 +1,10 @@
+{
+  "excel_path": "c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\saida_pedido-de-compra v2.xlsx",
+  "usar_saldo_do_banco": true,
+  "f7_geometry": "950x520",
+  "db_host": "localhost",
+  "db_database": "postgres",
+  "db_user": "postgresekenox",
+  "db_password": "<SUA_SENHA_AQUI>",
+  "db_port": 55432
+}
