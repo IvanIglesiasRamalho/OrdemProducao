@@ -21,14 +21,15 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 import requests
 import psycopg2
 from psycopg2 import errors
-
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
-
 
 # ============================================================
 # PATHS
 # ============================================================
+
 
 def get_app_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -97,16 +98,30 @@ def find_icon_path() -> Optional[str]:
 
 def apply_window_icon(win) -> None:
     try:
-        p = find_icon_path()
-        if p:
-            win.iconbitmap(default=p)
+        ico = find_icon_path()  # seu .ico
+        if ico:
+            try:
+                win.iconbitmap(default=ico)
+            except Exception:
+                pass
+
+        # Para a taskbar, o que ajuda MESMO é iconphoto com PNG
+        png_candidates = [
+            os.path.join(BASE_DIR, "imagens", "favicon.png"),
+            os.path.join(APP_DIR, "imagens", "favicon.png"),
+        ]
+        png = next((p for p in png_candidates if os.path.isfile(p)), None)
+        if png:
+            img = tk.PhotoImage(file=png)
+            win.iconphoto(True, img)
+            win._icon_img = img  # mantém referência (senão some)
     except Exception:
         pass
-
 
 # ============================================================
 # CONFIG (JSON)
 # ============================================================
+
 
 @dataclass
 class AppConfig:
@@ -346,6 +361,78 @@ class SistemaOrdemProducao:
             raise RuntimeError("Sem cursor (não conectado).")
         self.cursor.execute(sql, params)
 
+    from decimal import Decimal
+
+    def relatorio_bling_insumos_produto(self, produto_id: int, qtd_produzir: float):
+        """
+        Retorna 6 colunas:
+        descricao, codigo(produtoId), valor_unit, unidade, qtde_un, qtde_total
+        """
+        sql = """
+            SELECT
+                COALESCE(pcomp."nomeProduto", '')                         AS descricao,
+                pcomp."produtoId"::bigint                                 AS codigo,
+
+                -- ✅ valor unitário do insumo (prioriza precoCompra se existir)
+                CASE
+                WHEN ipcomp."precoCompra" IS NOT NULL AND ipcomp."precoCompra" > 0
+                    THEN ipcomp."precoCompra"::numeric
+                WHEN pcomp."custo" IS NOT NULL AND pcomp."custo" > 0
+                    THEN pcomp."custo"::numeric
+                ELSE 0::numeric
+                END                                                      AS valor_unit,
+
+                COALESCE(ipcomp."unidadeMedida", ipcomp."unidade", '')    AS unidade,
+                COALESCE(e."quantidade", 0)::numeric                      AS qtde_un,
+                (COALESCE(e."quantidade", 0) * %s)::numeric               AS qtde_total
+            FROM "Ekenox"."estrutura" e
+            LEFT JOIN "Ekenox"."produtos" pcomp
+                ON pcomp."produtoId"::bigint = e."componente"::bigint
+            LEFT JOIN "Ekenox"."infoProduto" ipcomp
+                ON ipcomp."fkProduto"::bigint = e."componente"::bigint
+            WHERE e."fkproduto"::bigint = %s
+            ORDER BY descricao;
+        """
+        self._q(sql, (float(qtd_produzir), int(produto_id)))
+        return self.cursor.fetchall() or []
+
+    def buscar_qtd_produzir_por_sku(self, sku: str) -> float:
+        """
+        Soma a quantidade no arranjo para um SKU (tenta com N e sem N).
+        Retorna 0.0 se não encontrar.
+        """
+        try:
+            sku_raw = (sku or "")
+            sku_norm = sku_raw.strip().upper()
+
+            if not sku_norm:
+                return 0.0
+
+            # Gera candidatos: SKU como está, +N, e sem N
+            candidatos = {sku_norm}
+            if sku_norm.endswith("N"):
+                candidatos.add(sku_norm[:-1])
+            else:
+                candidatos.add(sku_norm + "N")
+
+            candidatos = sorted(candidatos)  # só pra debug ficar estável
+
+            sql = """
+                SELECT COALESCE(SUM(a."quantidade"), 0)
+                FROM "Ekenox"."arranjo" a
+                WHERE UPPER(TRIM(a."sku")) = ANY(%s);
+            """
+            self._q(sql, (candidatos,))
+            row = self.cursor.fetchone()
+
+            return float(row[0]) if row and row[0] is not None else 0.0
+
+        except Exception as e:
+            print("Erro buscar_qtd_produzir_por_sku:", e)
+            if self.conn:
+                self.conn.rollback()
+            return 0.0
+
     def validar_produto(self, produto_id: int) -> Optional[Dict[str, Any]]:
         try:
             sql = """
@@ -360,6 +447,31 @@ class SistemaOrdemProducao:
             return {"produtoid": r[0], "nomeproduto": r[1], "sku": r[2], "preco": r[3], "tipo": r[4]}
         except Exception:
             return None
+
+    def media_vendas_mensal(self, fk_produto: int, ano: int | None = None, mes: int | None = None) -> float:
+        try:
+            if ano is None or mes is None:
+                hoje = date.today()
+                ano = hoje.year
+                mes = hoje.month
+
+            mes_inicio = date(int(ano), int(mes), 1)
+
+            sql = """
+                SELECT v.media_vendas
+                FROM vw_media_vendas_mensal v
+                WHERE v.fkProduto = %s
+                  AND date_trunc('month', v.dataVenda)::date = %s
+                LIMIT 1
+            """
+            self._q(sql, (int(fk_produto), mes_inicio))
+            row = self.cursor.fetchone()
+            return float(row[0]) if row and row[0] is not None else 0.0
+
+        except Exception:
+            if self.conn:
+                self.conn.rollback()
+            return 0.0
 
     def validar_situacao(self, situacao_id: int) -> Optional[Dict[str, Any]]:
         try:
@@ -615,6 +727,22 @@ class SistemaOrdemProducao:
                 FROM "Ekenox"."estrutura" e
                 WHERE e."fkproduto"::bigint = %s
             ORDER BY e."componente";
+            """
+            self._q(sql, (str(fkproduto),))  # str() pra evitar text=bigint
+            return self.cursor.fetchall() or []
+        except Exception as e:
+            # rollback extra de segurança (caso alguém tenha usado execute direto)
+            if self.conn:
+                self.conn.rollback()
+            raise
+
+    def f6_buscar_estrutura(self, fkproduto: int):
+        try:
+            sql = """
+                select ip."estoqueMaximo"
+                from "Ekenox"."infoProduto" as ip
+                WHERE ip."fkProduto"::bigint = %s
+                limit 1;
             """
             self._q(sql, (str(fkproduto),))  # str() pra evitar text=bigint
             return self.cursor.fetchall() or []
@@ -1188,6 +1316,286 @@ class EtiquetasModule:
 
 class OrdemProducaoApp(tk.Tk):
 
+    def exportar_relatorio_bling_excel_f9(self, event=None):
+        if not self.connected:
+            messagebox.showerror("F9 - Relatório", "Sem conexão com o banco.")
+            return
+
+        prod_txt = (self.produto_id_var.get() or "").strip()
+        qtd_txt = (self.quantidade_var.get() or "").strip()
+
+        if not prod_txt:
+            messagebox.showerror("F9 - Relatório", "Informe o Produto (ID).")
+            return
+
+        try:
+            produto_id = int(prod_txt)
+        except ValueError:
+            messagebox.showerror("F9 - Relatório", "Produto (ID) inválido.")
+            return
+
+        try:
+            qtd_produzir = float(qtd_txt.replace(",", ".")) if qtd_txt else 0.0
+        except Exception:
+            qtd_produzir = 0.0
+
+        if qtd_produzir <= 0:
+            messagebox.showerror(
+                "F9 - Relatório", "Quantidade para produzir deve ser > 0.")
+            return
+
+        produto = self.sistema.validar_produto(produto_id) or {}
+        if not produto:
+            messagebox.showerror("F9 - Relatório", "Produto não encontrado.")
+            return
+
+        prod_nome = (produto.get("nomeproduto") or "").strip()
+        prod_codigo = int(produto_id)
+
+        try:
+            insumos = self.sistema.relatorio_bling_insumos_produto(
+                produto_id, qtd_produzir)
+        except Exception as e:
+            messagebox.showerror(
+                "F9 - Relatório", f"Erro ao consultar estrutura:\n{e}")
+            return
+
+        if not insumos:
+            messagebox.showinfo(
+                "F9 - Relatório", "Sem estrutura cadastrada para este produto.")
+            return
+
+        # ---------- helpers ----------
+        def D(x) -> Decimal:
+            if x is None:
+                return Decimal("0")
+            if isinstance(x, Decimal):
+                return x
+            try:
+                return Decimal(str(x).replace(",", "."))
+            except Exception:
+                return Decimal("0")
+
+        def money2(x: Decimal) -> Decimal:
+            return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        qtd_prod_D = D(qtd_produzir)
+
+        # ---------- cálculo conferido ----------
+        total_geral = Decimal("0")
+        for (desc, cod, valor_unit, un, qt_un, qt_total) in insumos:
+            v = D(valor_unit)
+            qt_tot = D(qt_total)
+            total_item = money2(v * qt_tot)
+            total_geral += total_item
+
+        unitario = money2(
+            total_geral / qtd_prod_D) if qtd_prod_D > 0 else Decimal("0")
+
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Relatório"
+
+        def auto_col_width(ws, min_w=10, max_w=60):
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    v = cell.value
+                    if v is None:
+                        continue
+                    max_len = max(max_len, len(str(v)))
+                ws.column_dimensions[col_letter].width = max(
+                    min_w, min(max_w, max_len + 2))
+
+        # Estilos
+        blue = PatternFill("solid", fgColor="1F4E79")
+        gray = PatternFill("solid", fgColor="F2F2F2")
+        header_font = Font(bold=True, color="FFFFFF")
+        bold = Font(bold=True)
+        title_font = Font(bold=True, size=14)
+
+        thin = Side(style="thin", color="BFBFBF")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        qty_fmt = '#,##0.00'
+        money_fmt = '"R$" #,##0.00'
+
+        # ---------- título ----------
+        ws.merge_cells("A1:G1")
+        ws["A1"] = "Relatório de Produção"
+        ws["A1"].font = title_font
+        ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 24
+
+        ws.append([""] * 7)
+
+        # ---------- Item para produção ----------
+        ws.append(["Item para produção"] + [""] * 6)
+        ws.merge_cells(start_row=ws.max_row, start_column=1,
+                       end_row=ws.max_row, end_column=7)
+        ws.cell(row=ws.max_row, column=1).font = bold
+
+        ws.append(["Descrição", "Código",
+                  "Quantidade a produzir", "", "", "", ""])
+        r = ws.max_row
+        for c in range(1, 4):
+            cell = ws.cell(row=r, column=c)
+            cell.fill = blue
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = Alignment(
+                horizontal="center", vertical="center", wrap_text=True)
+
+        ws.append([prod_nome, prod_codigo, float(
+            qtd_produzir), "", "", "", ""])
+        r = ws.max_row
+        for c in range(1, 4):
+            cell = ws.cell(row=r, column=c)
+            cell.border = border
+            if c == 3:
+                cell.number_format = qty_fmt
+                cell.alignment = Alignment(
+                    horizontal="right", vertical="center")
+
+        ws.append([""] * 7)
+
+        # ---------- Insumos ----------
+        ws.append(["Insumos (matéria prima)"] + [""] * 6)
+        ws.merge_cells(start_row=ws.max_row, start_column=1,
+                       end_row=ws.max_row, end_column=7)
+        ws.cell(row=ws.max_row, column=1).font = bold
+
+        headers = [
+            "Descrição", "Código", "Valor do insumo", "Qtde un.",
+            "Valor (Qtde un * compra)", "Qtde total", "Total insumo"
+        ]
+        ws.append(headers)
+
+        header_row = ws.max_row
+        for c in range(1, 8):
+            cell = ws.cell(row=header_row, column=c)
+            cell.fill = blue
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = Alignment(
+                horizontal="center", vertical="center", wrap_text=True)
+
+        start_data = ws.max_row + 1
+
+        for (desc, cod, valor_unit, un, qt_un, qt_total) in insumos:
+            v = D(valor_unit)
+            q_un = D(qt_un)
+            q_tot = D(qt_total)
+
+            valor_qt_un = money2(v * q_un)   # ✅ por 1 unidade do produto final
+            total_item = money2(v * q_tot)  # ✅ total do lote
+
+            ws.append([
+                desc or "",
+                int(cod or 0),
+                float(v),
+                float(q_un),
+                float(valor_qt_un),
+                float(q_tot),
+                float(total_item),
+            ])
+
+            r = ws.max_row
+            for c in range(1, 8):
+                cell = ws.cell(row=r, column=c)
+                cell.border = border
+
+                # C, E, G = dinheiro | D, F = quantidade
+                if c in (3, 5, 7):
+                    cell.number_format = money_fmt
+                    cell.alignment = Alignment(
+                        horizontal="right", vertical="center")
+                elif c in (4, 6):
+                    cell.number_format = qty_fmt
+                    cell.alignment = Alignment(
+                        horizontal="right", vertical="center")
+                else:
+                    cell.alignment = Alignment(
+                        horizontal="left", vertical="center", wrap_text=True)
+
+        end_data = ws.max_row
+        ws.auto_filter.ref = f"A{header_row}:G{end_data}"
+        ws.freeze_panes = f"A{start_data}"
+
+        # Linha TOTAL (geral)
+        ws.append(["", "", "", "", "", "TOTAL:", float(total_geral)])
+        r = ws.max_row
+        for c in range(1, 8):
+            ws.cell(row=r, column=c).border = border
+        ws.cell(row=r, column=6).font = bold
+        ws.cell(row=r, column=7).font = bold
+        ws.cell(row=r, column=7).number_format = money_fmt
+        ws.cell(row=r, column=7).alignment = Alignment(
+            horizontal="right", vertical="center")
+
+        ws.append([""] * 7)
+
+        # ---------- Observação ----------
+        ws.append(["Observação"] + [""] * 6)
+        ws.merge_cells(start_row=ws.max_row, start_column=1,
+                       end_row=ws.max_row, end_column=7)
+        ws.cell(row=ws.max_row, column=1).font = bold
+
+        # Unitário em E (coluna 5) e Total Geral em G (coluna 7)
+        ws.append(["", "", "Total Unitário:", "", float(
+            unitario), "Total Geral:", float(total_geral)])
+        obs_row = ws.max_row
+
+        # ✅ E (unitário) em moeda
+        ws.cell(row=obs_row, column=5).number_format = money_fmt
+        # ✅ G (total) em moeda
+        ws.cell(row=obs_row, column=7).number_format = money_fmt
+        ws.cell(row=obs_row, column=5).alignment = Alignment(
+            horizontal="right", vertical="center")
+        ws.cell(row=obs_row, column=7).alignment = Alignment(
+            horizontal="right", vertical="center")
+
+        for c in range(1, 8):
+            cell = ws.cell(row=obs_row, column=c)
+            cell.border = border
+            cell.fill = gray
+            cell.font = bold
+            if c in (5, 7):
+                cell.alignment = Alignment(
+                    horizontal="right", vertical="center")
+            else:
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="center")
+
+        # Larguras
+        auto_col_width(ws)
+        ws.column_dimensions["A"].width = 45
+        ws.column_dimensions["B"].width = 20
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 12
+        ws.column_dimensions["E"].width = 18
+        ws.column_dimensions["F"].width = 12
+        ws.column_dimensions["G"].width = 14
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_arquivo = f"relatorio_bling_{produto_id}_{ts}.xlsx"
+        caminho = os.path.join(BASE_DIR, nome_arquivo)
+
+        wb.save(caminho)
+        messagebox.showinfo(
+            "F9 - Relatório", f"Relatório gerado em:\n{caminho}")
+
+        try:
+            if os.name == "nt":
+                os.startfile(caminho)
+        except Exception:
+            pass
+
     def _on_f12(self, event=None):
         # evita abrir enquanto está fechando o app
         if getattr(self, "_closing", False):
@@ -1382,6 +1790,15 @@ class OrdemProducaoApp(tk.Tk):
             self.data_previsao_final_var = tk.StringVar()
             self.data_inicio_var = tk.StringVar()
             self.data_fim_var = tk.StringVar()
+            self.saldo_var = tk.StringVar()
+            self.media_vendas_var = tk.StringVar()
+            self.dia = tk.StringVar()
+            self.media_mes = tk.StringVar()
+            self.multiplicador = tk.StringVar()
+            self.producao_mes = tk.StringVar()
+            self.qtd_prod = tk.StringVar()
+            self.sugestao_qtd = tk.StringVar()
+            self.qtde_sku_var = tk.StringVar()
 
             # linha 0
             ttk.Label(form_frame, text="Número da Ordem:*").grid(row=0,
@@ -1484,6 +1901,8 @@ class OrdemProducaoApp(tk.Tk):
                        command=self.salvar_ordem).pack(side=tk.LEFT, padx=5)
             ttk.Button(botoes, text="Limpar", command=self.limpar_formulario).pack(
                 side=tk.LEFT, padx=5)
+            ttk.Button(botoes, text="Relatório (F9)",
+                       command=self.exportar_relatorio_bling_excel_f9).pack(side=tk.LEFT, padx=5)
             ttk.Button(botoes, text="Ordens Existentes (F10)",
                        command=self.mostrar_ordens_producao).pack(side=tk.LEFT, padx=5)
             ttk.Button(botoes, text="Finalizar Pendentes (F11)",
@@ -1505,6 +1924,7 @@ class OrdemProducaoApp(tk.Tk):
                 ("<F6>",  self.mostrar_detalhes_quantidade),
                 ("<F7>",  self.analisar_estrutura_f7),
                 ("<F8>",  self.mostrar_depositos_destino),
+                ("<F9>",  self.exportar_relatorio_bling_excel_f9),
                 ("<F10>", self.mostrar_ordens_producao),
                 ("<F11>", self.finalizar_producoes_pendentes),
                 ("<F12>", self._on_f12),
@@ -1559,17 +1979,59 @@ class OrdemProducaoApp(tk.Tk):
 
             preco = float(produto.get("preco") or 0)
             self.valor_var.set(f"{preco:.2f}")
-
+            sku = self.sistema.validar_produto(pid).get("sku", "")
             qtd = 1.0
             self.quantidade_var.set(f"{qtd:.2f}")
+            saldo = self.sistema.saldo_fisico(pid)
+            self.saldo_var.set(f"{saldo:.2f}")
+            media_vendas = self.sistema.media_vendas_mensal(pid)
+            self.media_vendas_var.set(f"{media_vendas:.2f}")
+            dia = date.today().day
+            qtd_prod_rows = self.sistema.f6_buscar_estrutura(pid)
+            qtd_prod = float(
+                qtd_prod_rows[0][0]) if qtd_prod_rows and qtd_prod_rows[0][0] is not None else 0.0
+            self.qtd_prod.set(f"{qtd_prod:.2f}")
+
+            if dia <= 0:
+                dia = 1
+            self.dia.set(dia)
+            if media_vendas <= 0:
+                media_mes = 1.0
+            else:
+                media_mes = media_vendas / dia
+            multiplicador = 7  # 7 dias de produção
+            producao_media = media_mes * multiplicador
+            sugestao_qtd = max(0.0, qtd_prod - producao_media)
+            sku = (produto.get("sku") or "").strip()
+
+            # se quiser remover N/n final como você faz no módulo de etiquetas:
+            if sku and sku[-1].upper() == "N":
+                sku = sku[:-1]
+
+            qtde_sku = self.sistema.buscar_qtd_produzir_por_sku(sku)
+            self.qtde_sku_var.set(f"{qtde_sku:.2f}")
+
+            self.sugestao_qtd.set(f"{sugestao_qtd:.2f}")
+
             self.variaveis_quantidade = {
-                "produto_id": pid,
-                "produto_nome": produto.get("nomeproduto"),
-                "sku": produto.get("sku"),
-                "preco": preco,
-                "quantidade_sugerida": qtd,
-                "obs": "Cálculo simplificado nesta versão. (Você pode plugar seu cálculo completo aqui.)",
+                "Produto id                   ": pid,
+                "Produto nome                 ": produto.get("nomeproduto"),
+                "sku                          ": produto.get("sku"),
+                "Preco                        ": preco,
+                "Quantidade sugerida          ": qtd,
+                "Saldo                        ": saldo,
+                "Media vendas mês             ": media_vendas,
+                "Dia atual                    ": dia,
+                "Producao media               ": media_mes,
+                "Previdasão dias              ": multiplicador,
+                "Producao mensal sugerida     ": producao_media,
+                "Quantidade produção máxima   ": qtd_prod,
+                "Quantidade sugerida produção ": sugestao_qtd,
+                "Quantidade SKU em arranjo    ": qtde_sku,
+                "obs": "Cálculo simplificado nesta versão: ((Saldo/Média Vendas mês / Dia do Mês) X 7) "
+                       "Quantidade produção máxima - resultado  anterior. / arranjo",
             }
+            self.quantidade_var.set(f"{sugestao_qtd:.2f}")
         except Exception as e:
             self.quantidade_var.set("0")
             self.variaveis_quantidade = {"erro": str(e)}
@@ -2331,40 +2793,123 @@ class OrdemProducaoApp(tk.Tk):
             dados["data_previsao_final"] = None
             dados["data_inicio"] = None
             dados["data_fim"] = None
+            dados["transmite_bling"] = 0  # opcional
 
-            if not messagebox.askyesno("Confirmar", f"Confirma inserir OP nº {dados['numero']}?"):
+            # --------------------------
+            # Define o "tamanho do lote" pelo ARRANJO (via SKU)
+            # --------------------------
+            produto = self.sistema.validar_produto(int(dados["fkprodutoid"]))
+            if not produto:
+                raise ValueError("Produto não encontrado para gerar OP.")
+
+            sku = (produto.get("sku") or "").strip()
+            # Se vocês usam a regra do 'N' final, mantenha:
+            if sku and sku[-1].upper() == "N":
+                # normalmente o arranjo está com N (ex.: VIX9444N)
+                sku_arranjo = sku
+            else:
+                sku_arranjo = sku
+
+            qtd_arranjo = float(
+                self.sistema.buscar_qtd_produzir_por_sku(sku_arranjo) or 0.0)
+            qtd_total = float(dados["quantidade"] or 0.0)
+
+            # Se não houver arranjo (0) ou a quantidade total já couber em 1 OP, segue como antes
+            if qtd_arranjo <= 0:
+                partes = [qtd_total]
+            else:
+                # Quebra em OPs com no máximo qtd_arranjo
+                partes = []
+                restante = qtd_total
+                # evita loop infinito por número “quase zero”
+                eps = 1e-9
+
+                while restante > eps:
+                    lote = min(qtd_arranjo, restante)
+                    # normaliza lote (evita -0.00)
+                    if lote < eps:
+                        break
+                    partes.append(lote)
+                    restante -= lote
+
+            # Converte o número base da OP para ir incrementando
+            try:
+                numero_base = int(str(dados["numero"]).strip())
+            except Exception:
+                numero_base = int(self.sistema.gerar_numero_ordem())
+
+            # Confirmação mostrando como vai quebrar
+            if len(partes) == 1:
+                msg_conf = f"Confirma inserir OP nº {numero_base}?"
+            else:
+                resumo = ", ".join([f"{p:.2f}" for p in partes])
+                msg_conf = (
+                    f"Confirma inserir {len(partes)} OPs a partir do nº {numero_base}?\n\n"
+                    f"Quantidade total: {qtd_total:.2f}\n"
+                    f"Máximo por OP (arranjo): {qtd_arranjo:.2f}\n"
+                    f"Lotes: {resumo}"
+                )
+
+            if not messagebox.askyesno("Confirmar", msg_conf):
                 return
 
-            ok, err = self.sistema.inserir_ordem_producao(dados)
-            if not ok:
-                messagebox.showerror("Erro ao inserir", err)
-                return
-            # ✅ Envia para o Bling (assíncrono, não trava a UI)
-            threading.Thread(
-                target=enviar_op_bling_thread,
-                args=(self, self.cfg, dados),
-                daemon=True
-            ).start()
+            # --------------------------
+            # Insere uma OP por lote
+            # --------------------------
+            op_criadas = []
 
-            # webhook opcional
-            if N8N_WEBHOOK_URL:
-                try:
-                    payload = {
-                        "numero": dados["numero"],
-                        "deposito_id_origem": dados["deposito_id_origem"],
-                        "deposito_id_destino": dados["deposito_id_destino"],
-                        "situacao_id": dados["situacao_id"],
-                        "fkprodutoid": dados["fkprodutoid"],
-                        "quantidade": float(dados["quantidade"] or 0),
-                        "responsavel": dados.get("responsavel"),
-                        "observacao": dados.get("observacao"),
-                    }
-                    requests.post(N8N_WEBHOOK_URL, json=payload, timeout=10)
-                except Exception:
-                    pass
+            for i, qtd_lote in enumerate(partes):
+                dados_lote = dict(dados)  # cópia
+                dados_lote["id"] = None
+                dados_lote["numero"] = str(numero_base + i)
+                dados_lote["quantidade"] = float(qtd_lote)
 
-            messagebox.showinfo(
-                "Sucesso", f"OP {dados['numero']} inserida com sucesso!")
+                ok, err = self.sistema.inserir_ordem_producao(dados_lote)
+                if not ok:
+                    messagebox.showerror(
+                        "Erro ao inserir",
+                        f"Falha ao inserir OP nº {dados_lote['numero']}.\n\n{err}"
+                    )
+                    return
+
+                # ✅ Envia para o Bling (assíncrono, não trava a UI)
+    #            threading.Thread(
+    #                target=enviar_op_bling_thread,
+    #                args=(self, self.cfg, dados),
+    #                daemon=True
+    #            ).start()
+
+                # webhook opcional (manda 1 payload por OP)
+                if N8N_WEBHOOK_URL:
+                    try:
+                        payload = {
+                            "numero": dados_lote["numero"],
+                            "deposito_id_origem": dados_lote["deposito_id_origem"],
+                            "deposito_id_destino": dados_lote["deposito_id_destino"],
+                            "situacao_id": dados_lote["situacao_id"],
+                            "fkprodutoid": dados_lote["fkprodutoid"],
+                            "quantidade": float(dados_lote["quantidade"] or 0),
+                            "responsavel": dados_lote.get("responsavel"),
+                            "observacao": dados_lote.get("observacao"),
+                        }
+                        requests.post(N8N_WEBHOOK_URL,
+                                      json=payload, timeout=10)
+                    except Exception:
+                        pass
+
+                op_criadas.append(
+                    (dados_lote["numero"], float(dados_lote["quantidade"])))
+
+            if len(op_criadas) == 1:
+                messagebox.showinfo(
+                    "Sucesso", f"OP {op_criadas[0][0]} inserida com sucesso!")
+            else:
+                lista = "\n".join(
+                    [f"OP {n} - {q:.2f}" for (n, q) in op_criadas])
+                messagebox.showinfo(
+                    "Sucesso",
+                    f"{len(op_criadas)} OPs inseridas com sucesso!\n\n{lista}"
+                )
 
             self.limpar_formulario()
 
