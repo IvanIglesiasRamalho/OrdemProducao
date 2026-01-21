@@ -1,4 +1,14 @@
 from __future__ import annotations
+# pyright: ignore[reportMissingImports]
+from info_produto_crud import InfoProdutoCRUDMixin
+from arranjo_crud import ArranjoCRUDMixin
+from deposito_crud import DepositoCRUDMixin
+from categoria_crud import CategoriaCRUDMixin
+from estoque_crud import EstoqueCRUDMixin
+from estrutura_crud import EstruturaCRUDMixin
+from fornecedor_crud import FornecedorCRUDMixin
+from produtos_crud import ProdutosCRUDMixin
+from situacao_crud import SituacaoCRUDMixin
 from reportlab.lib.pagesizes import mm
 from reportlab.pdfgen import canvas
 
@@ -322,7 +332,10 @@ def gerar_abas_fornecedor_pedido(dados: List[Dict[str, Any]], nome_aba_modelo: s
 # BANCO / REGRAS (inclui F7 lendo Ekenox.estrutura/infoProduto/fornecedor)
 # ============================================================
 
-class SistemaOrdemProducao:
+class SistemaOrdemProducao(InfoProdutoCRUDMixin, ArranjoCRUDMixin, CategoriaCRUDMixin, DepositoCRUDMixin,
+                           EstoqueCRUDMixin, EstruturaCRUDMixin, FornecedorCRUDMixin, ProdutosCRUDMixin,
+                           SituacaoCRUDMixin):
+
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
         self.conn = None
@@ -363,6 +376,93 @@ class SistemaOrdemProducao:
 
     from decimal import Decimal
 
+    def validar_estoque_insumos_para_producao(
+        self,
+        fkproduto: int,
+        qtd_produzir: float,
+        bloquear_se_saldo_negativo: bool = True,
+        bloquear_se_insuficiente: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Valida estoque dos insumos (estrutura) para produzir 'qtd_produzir' do produto final.
+        Regras:
+          - se saldo < 0: bloqueia (se bloquear_se_saldo_negativo=True)
+          - se saldo < necessario: bloqueia (se bloquear_se_insuficiente=True)
+
+        Retorno:
+          {
+            "ok": bool,
+            "problemas": [
+                {
+                  "componente": int,
+                  "nome": str,
+                  "qtd_base": float,
+                  "necessario": float,
+                  "saldo": float,
+                  "falta": float
+                }, ...
+            ]
+          }
+        """
+        problemas: List[Dict[str, Any]] = []
+
+        try:
+            # estrutura do produto final
+            # [(componente, qtd_base), ...]
+            itens = self.f7_buscar_estrutura(int(fkproduto))
+
+            # Se não tiver estrutura, aqui você decide:
+            # - pode permitir salvar (ok=True) ou bloquear. Vou deixar permitir.
+            if not itens:
+                return {"ok": True, "problemas": []}
+
+            for (componente, qtd_base) in itens:
+                comp_id = int(componente)
+                qtd_base_f = float(qtd_base or 0.0)
+                necessario = qtd_base_f * float(qtd_produzir)
+
+                saldo = float(self.saldo_fisico(comp_id) or 0.0)
+
+                # nome do componente (pra mostrar no erro)
+                prod_comp = self.validar_produto(comp_id) or {}
+                nome = (prod_comp.get("nomeproduto") or "").strip()
+
+                falta = max(0.0, necessario - saldo)
+
+                # regra 1: saldo negativo
+                if bloquear_se_saldo_negativo and saldo < 0:
+                    problemas.append({
+                        "componente": comp_id,
+                        "nome": nome,
+                        "qtd_base": qtd_base_f,
+                        "necessario": necessario,
+                        "saldo": saldo,
+                        "falta": falta,
+                        "motivo": "Saldo negativo",
+                    })
+                    continue
+
+                # regra 2: insuficiente
+                if bloquear_se_insuficiente and saldo < necessario:
+                    problemas.append({
+                        "componente": comp_id,
+                        "nome": nome,
+                        "qtd_base": qtd_base_f,
+                        "necessario": necessario,
+                        "saldo": saldo,
+                        "falta": falta,
+                        "motivo": "Saldo insuficiente",
+                    })
+
+            ok = (len(problemas) == 0)
+            return {"ok": ok, "problemas": problemas}
+
+        except Exception:
+            if self.conn:
+                self.conn.rollback()
+            # em caso de erro técnico, é mais seguro bloquear
+            return {"ok": False, "problemas": [{"motivo": "Erro ao validar estrutura/estoque"}]}
+
     def relatorio_bling_insumos_produto(self, produto_id: int, qtd_produzir: float):
         """
         Retorna 6 colunas:
@@ -395,6 +495,47 @@ class SistemaOrdemProducao:
         """
         self._q(sql, (float(qtd_produzir), int(produto_id)))
         return self.cursor.fetchall() or []
+
+    def buscar_ordem_producao_por_numero(self, numero: str | int):
+        try:
+            num_int = int(str(numero).strip())
+
+            sql = """
+                SELECT
+                    o."id", o."numero", o."deposito_destino", o."deposito_origem",
+                    o."situacao_id", o."responsavel", o."fkprodutoid",
+                    o."data_previsao_inicio", o."data_previsao_final",
+                    o."data_inicio", o."data_fim", o."valor", o."observacao", o."quantidade"
+                FROM "Ekenox"."ordem_producao" o
+                WHERE o."numero" = %s
+                LIMIT 1;
+            """
+            self._q(sql, (num_int,))
+            r = self.cursor.fetchone()
+            if not r:
+                return None
+
+            return {
+                "id": r[0],
+                "numero": r[1],
+                "deposito_destino": r[2],
+                "deposito_origem": r[3],
+                "situacao_id": r[4],
+                "responsavel": r[5],
+                "fkprodutoid": r[6],
+                "data_previsao_inicio": r[7],
+                "data_previsao_final": r[8],
+                "data_inicio": r[9],
+                "data_fim": r[10],
+                "valor": r[11],
+                "observacao": r[12],
+                "quantidade": r[13],
+            }
+
+        except Exception as e:
+            if self.conn:
+                self.conn.rollback()
+            return None
 
     def buscar_qtd_produzir_por_sku(self, sku: str) -> float:
         """
@@ -1316,6 +1457,81 @@ class EtiquetasModule:
 
 class OrdemProducaoApp(tk.Tk):
 
+    def buscar_ordem_por_numero(self, event=None):
+        if not self.connected:
+            messagebox.showerror("Buscar OP", "Sem conexão com o banco.")
+            return
+
+        num_txt = (self.numero_var.get() or "").strip()
+        if not num_txt:
+            messagebox.showwarning("Buscar OP", "Informe o Número da Ordem.")
+            return
+
+        op = self.sistema.buscar_ordem_producao_por_numero(num_txt)
+        if not op:
+            messagebox.showinfo(
+                "Buscar OP", f"OP nº {num_txt} não encontrada.")
+            return
+
+        # Preenche campos
+        self.numero_var.set(str(op.get("numero") or ""))
+
+        self.deposito_destino_var.set(str(op.get("deposito_destino") or ""))
+        self.deposito_origem_var.set(str(op.get("deposito_origem") or ""))
+        self.situacao_id_var.set(str(op.get("situacao_id") or ""))
+        self.produto_id_var.set(str(op.get("fkprodutoid") or ""))
+
+        self.responsavel_var.set(str(op.get("responsavel") or ""))
+
+        qtd = op.get("quantidade")
+        if qtd is None:
+            self.quantidade_var.set("")
+        else:
+            try:
+                self.quantidade_var.set(f"{float(qtd):.2f}")
+            except Exception:
+                self.quantidade_var.set(str(qtd))
+
+        val = op.get("valor")
+        if val is None:
+            self.valor_var.set("")
+        else:
+            try:
+                self.valor_var.set(f"{float(val):.2f}")
+            except Exception:
+                self.valor_var.set(str(val))
+
+        obs = (op.get("observacao") or "").strip()
+        self.observacao_text.delete("1.0", tk.END)
+        if obs:
+            self.observacao_text.insert("1.0", obs)
+
+        # Importante:
+        # NÃO chamar atualizar_quantidade_producao() aqui,
+        # porque ela recalcula e sobrescreve a quantidade da OP buscada.
+
+        messagebox.showinfo(
+            "Buscar OP", f"OP nº {op.get('numero')} carregada com sucesso.")
+
+    def arredondar_para_multiplo_arranjo(self, qtd: float, arranjo: float) -> float:
+        """
+       Arredonda 'qtd' para CIMA no próximo múltiplo de 'arranjo'.
+        Ex:
+        qtd=6, arranjo=5 -> 10
+        qtd=10, arranjo=5 -> 10
+        qtd=0, arranjo=5 -> 0
+        """
+        try:
+            qtd = float(qtd or 0.0)
+            arranjo = float(arranjo or 0.0)
+            if qtd <= 0:
+                return 0.0
+            if arranjo <= 0:
+                return qtd
+            return ceil(qtd / arranjo) * arranjo
+        except Exception:
+            return float(qtd or 0.0)
+
     def exportar_relatorio_bling_excel_f9(self, event=None):
         if not self.connected:
             messagebox.showerror("F9 - Relatório", "Sem conexão com o banco.")
@@ -1609,6 +1825,17 @@ class OrdemProducaoApp(tk.Tk):
                 "Etiquetas (F12)", f"Erro ao abrir Etiquetas:\n{e}")
 
     def __init__(self):
+
+        from sistema_loader import SistemaOrdemProducao
+
+        self.sistema = SistemaOrdemProducao(self.cfg)
+        ok, err = self.sistema.conectar()
+        self.connected = ok
+
+        if not ok:
+            messagebox.showerror("Banco", f"Falha ao conectar:\n{err}")
+            return
+
         super().__init__()
 
         self._closing = False
@@ -1801,10 +2028,33 @@ class OrdemProducaoApp(tk.Tk):
             self.qtde_sku_var = tk.StringVar()
 
             # linha 0
-            ttk.Label(form_frame, text="Número da Ordem:*").grid(row=0,
-                                                                 column=0, sticky="e", padx=5, pady=5)
-            ttk.Entry(form_frame, textvariable=self.numero_var, width=15).grid(
-                row=0, column=1, sticky="w", padx=(0, 10), pady=5)
+            ttk.Label(form_frame, text="Número da Ordem:*").grid(
+                row=0, column=0, sticky="e", padx=5, pady=5
+            )
+
+            num_frame = ttk.Frame(form_frame)
+            num_frame.grid(row=0, column=1, sticky="w", padx=(0, 10), pady=5)
+
+            self.numero_entry = ttk.Entry(
+                num_frame, textvariable=self.numero_var, width=15)
+            self.numero_entry.grid(row=0, column=0, sticky="w")
+
+            ttk.Button(
+                num_frame,
+                text="Buscar (F5)",
+                width=12,
+                command=self.buscar_ordem_por_numero
+            ).grid(row=0, column=1, padx=(6, 0), sticky="w")
+
+            ttk.Label(form_frame, text="Responsável:").grid(
+                row=0, column=3, sticky="e", padx=5, pady=5
+            )
+            ttk.Entry(form_frame, textvariable=self.responsavel_var, width=25).grid(
+                row=0, column=4, sticky="ew", padx=(0, 10), pady=5
+            )
+
+            # (opcional) Enter no campo também busca
+            self.numero_entry.bind("<Return>", self.buscar_ordem_por_numero)
 
             ttk.Label(form_frame, text="Responsável:").grid(
                 row=0, column=3, sticky="e", padx=5, pady=5)
@@ -1921,6 +2171,7 @@ class OrdemProducaoApp(tk.Tk):
                 ("<F2>",  self.mostrar_produtos),
                 ("<F3>",  self.mostrar_situacoes),
                 ("<F4>",  self.mostrar_depositos_origem),
+                ("<F5>",  self.buscar_ordem_por_numero),   # <-- aqui
                 ("<F6>",  self.mostrar_detalhes_quantidade),
                 ("<F7>",  self.analisar_estrutura_f7),
                 ("<F8>",  self.mostrar_depositos_destino),
@@ -1979,59 +2230,94 @@ class OrdemProducaoApp(tk.Tk):
 
             preco = float(produto.get("preco") or 0)
             self.valor_var.set(f"{preco:.2f}")
-            sku = self.sistema.validar_produto(pid).get("sku", "")
-            qtd = 1.0
-            self.quantidade_var.set(f"{qtd:.2f}")
-            saldo = self.sistema.saldo_fisico(pid)
+
+            # saldo / media
+            saldo = float(self.sistema.saldo_fisico(pid) or 0.0)
             self.saldo_var.set(f"{saldo:.2f}")
-            media_vendas = self.sistema.media_vendas_mensal(pid)
+
+            media_vendas = float(self.sistema.media_vendas_mensal(pid) or 0.0)
             self.media_vendas_var.set(f"{media_vendas:.2f}")
-            dia = date.today().day
+
+            dia = int(date.today().day or 1)
+            if dia <= 0:
+                dia = 1
+            self.dia.set(dia)
+
+            # qtd_prod = estoqueMaximo (F6)
             qtd_prod_rows = self.sistema.f6_buscar_estrutura(pid)
             qtd_prod = float(
                 qtd_prod_rows[0][0]) if qtd_prod_rows and qtd_prod_rows[0][0] is not None else 0.0
             self.qtd_prod.set(f"{qtd_prod:.2f}")
 
-            if dia <= 0:
-                dia = 1
-            self.dia.set(dia)
+            # média diária
             if media_vendas <= 0:
-                media_mes = 1.0
+                media_dia = 1.0
             else:
-                media_mes = media_vendas / dia
+                media_dia = media_vendas / dia
+
             multiplicador = 7  # 7 dias de produção
-            producao_media = media_mes * multiplicador
-            sugestao_qtd = max(0.0, qtd_prod - producao_media)
+            producao_media = media_dia * multiplicador
+
+            # sugestão "crua" (como era)
+            sugestao_qtd_calc = max(0.0, qtd_prod - producao_media)
+
+            # --------------------------
+            # ARRANJO: buscar tamanho do lote e arredondar para múltiplo
+            # --------------------------
             sku = (produto.get("sku") or "").strip()
 
-            # se quiser remover N/n final como você faz no módulo de etiquetas:
+            # regra do N:
+            # - no salvar_ordem você usa sku com N (quando existir)
+            # - aqui vamos usar a MESMA lógica para consultar o arranjo
             if sku and sku[-1].upper() == "N":
-                sku = sku[:-1]
+                sku_arranjo = sku
+            else:
+                sku_arranjo = sku
 
-            qtde_sku = self.sistema.buscar_qtd_produzir_por_sku(sku)
-            self.qtde_sku_var.set(f"{qtde_sku:.2f}")
+            qtd_arranjo = float(
+                self.sistema.buscar_qtd_produzir_por_sku(sku_arranjo) or 0.0)
+            self.qtde_sku_var.set(f"{qtd_arranjo:.2f}")
 
-            self.sugestao_qtd.set(f"{sugestao_qtd:.2f}")
+            # arredondar para múltiplo do arranjo (sempre pra cima)
+            if sugestao_qtd_calc <= 0:
+                sugestao_qtd_final = 0.0
+            elif qtd_arranjo > 0:
+                sugestao_qtd_final = ceil(
+                    sugestao_qtd_calc / qtd_arranjo) * qtd_arranjo
+            else:
+                # se não houver arranjo cadastrado, mantém o valor calculado
+                sugestao_qtd_final = sugestao_qtd_calc
 
+            self.sugestao_qtd.set(f"{sugestao_qtd_final:.2f}")
+
+            # o campo Quantidade vai receber SEMPRE o múltiplo do arranjo
+            self.quantidade_var.set(f"{sugestao_qtd_final:.2f}")
+
+            # detalhes (F6)
             self.variaveis_quantidade = {
                 "Produto id                   ": pid,
                 "Produto nome                 ": produto.get("nomeproduto"),
                 "sku                          ": produto.get("sku"),
                 "Preco                        ": preco,
-                "Quantidade sugerida          ": qtd,
                 "Saldo                        ": saldo,
                 "Media vendas mês             ": media_vendas,
                 "Dia atual                    ": dia,
-                "Producao media               ": media_mes,
-                "Previdasão dias              ": multiplicador,
-                "Producao mensal sugerida     ": producao_media,
+                "Producao media (dia)         ": media_dia,
+                "Previsão dias                ": multiplicador,
+                "Producao média (7 dias)      ": producao_media,
                 "Quantidade produção máxima   ": qtd_prod,
-                "Quantidade sugerida produção ": sugestao_qtd,
-                "Quantidade SKU em arranjo    ": qtde_sku,
-                "obs": "Cálculo simplificado nesta versão: ((Saldo/Média Vendas mês / Dia do Mês) X 7) "
-                       "Quantidade produção máxima - resultado  anterior. / arranjo",
+
+                # antes/depois arranjo
+                "Sugestão calculada           ": sugestao_qtd_calc,
+                "Arranjo (lote)               ": qtd_arranjo,
+                "Sugestão (múltiplo arranjo)  ": sugestao_qtd_final,
+
+                "obs": (
+                    "Sugestão = (Quantidade produção máxima - (média diária * 7)). "
+                    "Depois, arredonda para CIMA no próximo múltiplo do ARRANJO (se existir)."
+                ),
             }
-            self.quantidade_var.set(f"{sugestao_qtd:.2f}")
+
         except Exception as e:
             self.quantidade_var.set("0")
             self.variaveis_quantidade = {"erro": str(e)}
@@ -2380,6 +2666,7 @@ class OrdemProducaoApp(tk.Tk):
     # ============================================================
     # F10 - Ordens existentes
     # ============================================================
+
     def mostrar_ordens_producao(self, event=None):
         if not self.connected:
             messagebox.showerror("F10 - Ordens", "Não há conexão com o banco.")
@@ -2849,6 +3136,53 @@ class OrdemProducaoApp(tk.Tk):
                     f"Máximo por OP (arranjo): {qtd_arranjo:.2f}\n"
                     f"Lotes: {resumo}"
                 )
+
+            # --------------------------
+            # VALIDA ESTOQUE DOS INSUMOS (bloqueia se negativo ou insuficiente)
+            # - valida o PIOR caso (maior lote), ou valida cada lote.
+            # - para não ter surpresa, vou validar cada lote.
+            # --------------------------
+            fkproduto_final = int(dados["fkprodutoid"])
+
+            problemas_gerais = []
+            for i, qtd_lote in enumerate(partes):
+                res = self.sistema.validar_estoque_insumos_para_producao(
+                    fkproduto=fkproduto_final,
+                    qtd_produzir=float(qtd_lote),
+                    bloquear_se_saldo_negativo=True,
+                    bloquear_se_insuficiente=True,
+                )
+                if not res.get("ok"):
+                    problemas_gerais.append(
+                        (i, float(qtd_lote), res.get("problemas", [])))
+
+            if problemas_gerais:
+                # monta mensagem amigável
+                linhas_msg = []
+                for (idx, lote, probs) in problemas_gerais:
+                    num_op = numero_base + idx
+                    linhas_msg.append(f"\nOP {num_op} | Lote: {lote:.2f}")
+                    for p in probs[:40]:  # evita msg gigante
+                        comp = p.get("componente", "")
+                        nome = (p.get("nome") or "")
+                        necessario = float(p.get("necessario") or 0.0)
+                        saldo = float(p.get("saldo") or 0.0)
+                        falta = float(p.get("falta") or 0.0)
+                        motivo = p.get("motivo", "Problema")
+                        linhas_msg.append(
+                            f" - {motivo}: {comp} {nome} | Nec: {necessario:.4f} | Saldo: {saldo:.4f} | Falta: {falta:.4f}"
+                        )
+
+                    if len(probs) > 40:
+                        linhas_msg.append(f" ... (+{len(probs)-40} itens)")
+
+                messagebox.showerror(
+                    "Bloqueado",
+                    "Não é possível salvar a OP.\n"
+                    "Existem insumos com saldo negativo e/ou saldo menor que o necessário:\n"
+                    + "\n".join(linhas_msg)
+                )
+                return
 
             if not messagebox.askyesno("Confirmar", msg_conf):
                 return
