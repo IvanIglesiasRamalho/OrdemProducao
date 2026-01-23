@@ -4,12 +4,10 @@ from __future__ import annotations
 tela_info_produto.py
 Python 3.12+ | Postgres 16+ | Tkinter + psycopg2
 
-- CRUD para "Ekenox"."infoProduto"
-- Botões de busca ao lado dos campos:
-  Categoria, Fornecedor, Localização, Unidade, Tipo Produção
-- Unidade: UN / PÇ / JOGO
-- Tipo: F (Simples), V (Produto Pai), E (Insumo Estrutura)
-- Ao fechar: reabre menu_principal.py com --skip-entrada
+- CRUD para infoProduto
+- Lookups (Produto, Categoria, Fornecedor, Localização, Unidade, Tipo Produção)
+- Fecha corretamente mesmo com popups abertos e reabre menu_principal com --skip-entrada
+- Lista com nomes (produto/categoria/fornecedor) quando possível, sem quebrar se não existir
 """
 
 import json
@@ -26,21 +24,29 @@ import psycopg2
 
 
 # ============================================================
-# AJUSTE TABELA PRINCIPAL
+# AJUSTE TABELAS (auto-tenta em ordem)
 # ============================================================
 
-INFO_TABLE = '"Ekenox"."infoProduto"'
+INFO_TABLE_CANDIDATES = [
+    '"Ekenox"."infoProduto"',
+    '"infoProduto"',
+    '"infoproduto"',
+]
 
-
-# ============================================================
-# LOOKUP: ajuste se quiser (auto-tenta em ordem)
-# ============================================================
+PRODUTOS_LOOKUP_CANDIDATES = [
+    ('"Ekenox"."produtos"', '"produtoId"', '"nomeProduto"'),
+    ('"produtos"', '"produtoId"', '"nomeProduto"'),
+    ('"Ekenox"."produtos"', '"id"', '"nomeProduto"'),
+    ('"produtos"', '"id"', '"nomeProduto"'),
+]
 
 CATEGORIA_LOOKUP_CANDIDATES = [
     ('"Ekenox"."categorias"', '"categoriaId"', '"nomeCategoria"'),
     ('"Ekenox"."categoria"', '"categoriaId"', '"nomeCategoria"'),
     ('"Ekenox"."categoria"', '"id"', '"nome"'),
     ('"Ekenox"."categorias"', '"id"', '"nome"'),
+    ('"categoria"', '"categoriaId"', '"nomeCategoria"'),
+    ('"categorias"', '"categoriaId"', '"nomeCategoria"'),
 ]
 
 FORNECEDOR_LOOKUP_CANDIDATES = [
@@ -48,6 +54,8 @@ FORNECEDOR_LOOKUP_CANDIDATES = [
     ('"Ekenox"."fornecedor"', '"fornecedorId"', '"nomeFornecedor"'),
     ('"Ekenox"."fornecedor"', '"id"', '"nome"'),
     ('"Ekenox"."fornecedores"', '"id"', '"nome"'),
+    ('"fornecedor"', '"fornecedorId"', '"nomeFornecedor"'),
+    ('"fornecedores"', '"fornecedorId"', '"nomeFornecedor"'),
 ]
 
 UNIDADE_OPCOES = ["UN", "PÇ", "JOGO"]
@@ -74,7 +82,6 @@ def get_app_dir() -> str:
 
 
 APP_DIR = get_app_dir()
-
 BASE_DIR = r"C:\Users\User\Desktop\Pyton\OrdemProducao"
 os.makedirs(BASE_DIR, exist_ok=True)
 
@@ -193,6 +200,13 @@ class Database:
         if self.conn:
             self.conn.commit()
 
+    def rollback(self) -> None:
+        try:
+            if self.conn:
+                self.conn.rollback()
+        except Exception:
+            pass
+
     def desconectar(self) -> None:
         try:
             if self.cursor:
@@ -256,14 +270,53 @@ def abrir_menu_principal_skip_entrada() -> None:
 
         py = _python_gui_windows() if os.name == "nt" else sys.executable
         cmd = [py, menu_path, "--skip-entrada"]
+
         popen_kwargs: dict[str, Any] = {"cwd": cwd}
         if os.name == "nt":
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
         else:
             popen_kwargs["start_new_session"] = True
+
         subprocess.Popen(cmd, **popen_kwargs)
     except Exception:
         pass
+
+
+# ============================================================
+# HELPERS: detectar tabela existente
+# ============================================================
+
+def _table_exists(cfg: AppConfig, table_name: str) -> bool:
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=cfg.db_host,
+            database=cfg.db_database,
+            user=cfg.db_user,
+            password=cfg.db_password,
+            port=int(cfg.db_port),
+            connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
+        cur.fetchone()
+        cur.close()
+        conn.close()
+        return True
+    except Exception:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def detectar_tabela(cfg: AppConfig, candidates: list[str], fallback: str) -> str:
+    for t in candidates:
+        if _table_exists(cfg, t):
+            return t
+    return fallback
 
 
 # ============================================================
@@ -291,7 +344,10 @@ class InfoProduto:
     fkFornecedor: Optional[int]
     fkCategoria: Optional[int]
     fkProduto: int
+
     nomeProduto: Optional[str] = None
+    nomeCategoria: Optional[str] = None
+    nomeFornecedor: Optional[str] = None
 
 
 # ============================================================
@@ -340,7 +396,7 @@ def _to_decimal(v: Any, field_name: str) -> Decimal:
 
 
 # ============================================================
-# POPUP DE BUSCA (genérico)
+# POPUP DE BUSCA (genérico) - com fechamento seguro (release grab)
 # ============================================================
 
 class LookupDialog(tk.Toplevel):
@@ -365,7 +421,14 @@ class LookupDialog(tk.Toplevel):
 
         self.geometry(f"{width}x{height}")
         self.transient(master)
-        self.grab_set()
+
+        # grab_set pode travar se o root fechar: a gente sempre libera no _safe_close
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+        self.protocol("WM_DELETE_WINDOW", self._safe_close)
 
         self.var = tk.StringVar()
 
@@ -392,32 +455,42 @@ class LookupDialog(tk.Toplevel):
 
         for c in self._columns:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=200, anchor="w", stretch=True)
+            self.tree.column(c, width=220, anchor="w", stretch=True)
 
         btm = ttk.Frame(self, padding=10)
         btm.pack(fill="x")
         ttk.Button(btm, text="Selecionar",
                    command=self.pick).pack(side="right")
-        ttk.Button(btm, text="Cancelar", command=self.destroy).pack(
+        ttk.Button(btm, text="Cancelar", command=self._safe_close).pack(
             side="right", padx=(0, 8))
 
         self.tree.bind("<Double-1>", lambda e: self.pick())
         self.bind("<Return>", lambda e: self.pick())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Escape>", lambda e: self._safe_close())
         ent.bind("<Return>", lambda e: self.refresh())
         ent.focus_set()
 
         self.refresh()
         self._center()
 
-    def _center(self):
+    def _safe_close(self) -> None:
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _center(self) -> None:
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
         x = (self.winfo_screenwidth() // 2) - (w // 2)
         y = (self.winfo_screenheight() // 2) - (h // 2)
         self.geometry(f"+{x}+{y}")
 
-    def refresh(self):
+    def refresh(self) -> None:
         term = self.var.get().strip() or None
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -425,7 +498,7 @@ class LookupDialog(tk.Toplevel):
         for r in rows:
             self.tree.insert("", "end", values=r)
 
-    def pick(self):
+    def pick(self) -> None:
         sel = self.tree.selection()
         if not sel:
             messagebox.showwarning(
@@ -433,7 +506,7 @@ class LookupDialog(tk.Toplevel):
             return
         values = self.tree.item(sel[0], "values")
         self._on_pick(tuple(values))
-        self.destroy()
+        self._safe_close()
 
 
 # ============================================================
@@ -441,39 +514,202 @@ class LookupDialog(tk.Toplevel):
 # ============================================================
 
 class InfoProdutoRepo:
-    def __init__(self, db: Database) -> None:
+    """
+    Correções importantes:
+    - JOIN dinâmico (produtos/categorias/fornecedores): tenta candidates e cacheia o que funcionar.
+    - lista retorna também nomes (quando disponível) sem quebrar caso não exista.
+    """
+
+    def __init__(self, db: Database, info_table: str) -> None:
         self.db = db
+        self.info_table = info_table
+
+        self._prod_join: Optional[tuple[str, str, str]] = None
+        self._cat_join: Optional[tuple[str, str, str]] = None
+        self._for_join: Optional[tuple[str, str, str]] = None
+
+    def _auto_lookup(self, termo: Optional[str], limit: int, kind: str) -> list[tuple]:
+        """
+        kind: 'fornecedor' ou 'categoria' ou 'produto'
+        Tenta descobrir automaticamente tabela/colunas via information_schema.
+        Retorna [(id, nome), ...]
+        """
+        like = f"%{termo}%" if termo else None
+
+        # padrões de nome de tabela
+        if kind == "fornecedor":
+            table_patterns = ["%fornec%", "%supplier%"]
+            id_patterns = ["%fornecedor%id%", "%id%fornecedor%", "%id%"]
+            name_patterns = ["%nome%fornec%",
+                             "%razao%", "%fantasia%", "%nome%"]
+        elif kind == "categoria":
+            table_patterns = ["%categ%", "%category%"]
+            id_patterns = ["%categoria%id%", "%id%categoria%", "%id%"]
+            name_patterns = ["%nome%categ%", "%descricao%", "%nome%"]
+        else:  # produto
+            table_patterns = ["%produt%", "%product%"]
+            id_patterns = ["%produto%id%", "%id%produto%", "%id%"]
+            name_patterns = ["%nome%produt%", "%descricao%", "%nome%"]
+
+        if not self.db.conectar():
+            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
+
+        try:
+            assert self.db.cursor is not None
+
+            # acha tabelas candidatas
+            self.db.cursor.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_type='BASE TABLE'
+                AND (
+                        lower(table_name) LIKE %s
+                    OR lower(table_name) LIKE %s
+                )
+                ORDER BY table_schema, table_name
+                """,
+                (table_patterns[0], table_patterns[1]),
+            )
+            tables = self.db.cursor.fetchall()
+
+            last_err = None
+
+            for schema, table in tables:
+                # acha colunas candidatas (id e nome)
+                self.db.cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema=%s AND table_name=%s
+                    """,
+                    (schema, table),
+                )
+                cols = [r[0] for r in self.db.cursor.fetchall()]
+                cols_l = [c.lower() for c in cols]
+
+                def pick_col(patterns: list[str]) -> Optional[str]:
+                    for pat in patterns:
+                        p = pat.replace("%", "")
+                        # tenta match simples por "contém"
+                        for c, cl in zip(cols, cols_l):
+                            if p in cl:
+                                return c
+                    return None
+
+                id_col = pick_col([p.replace("%", "") for p in id_patterns]) or (
+                    cols[0] if cols else None)
+                name_col = pick_col([p.replace("%", "")
+                                    for p in name_patterns])
+
+                if not id_col or not name_col:
+                    continue
+
+                full_table = f'"{schema}"."{table}"'
+                id_q = f'"{id_col}"'
+                name_q = f'"{name_col}"'
+
+                sql = f"""
+                    SELECT {id_q}::text AS id, COALESCE({name_q}::text,'') AS nome
+                    FROM {full_table}
+                    WHERE (%s IS NULL)
+                    OR ({id_q}::text ILIKE %s)
+                    OR (COALESCE({name_q}::text,'') ILIKE %s)
+                    ORDER BY nome, id
+                    LIMIT %s
+                """
+
+                try:
+                    self.db.cursor.execute(sql, (termo, like, like, limit))
+                    rows = self.db.cursor.fetchall()
+                    return [(r[0], r[1]) for r in rows]
+                except Exception as e:
+                    self.db.rollback()
+                    last_err = e
+                    continue
+
+            raise RuntimeError(
+                f"Auto-lookup não encontrou tabela/colunas para {kind}. "
+                f"Último erro: {type(last_err).__name__}: {last_err}"
+            )
+        finally:
+            self.db.desconectar()
+
+    def _pick_first_working_join(self, candidates: list[tuple[str, str, str]]) -> Optional[tuple[str, str, str]]:
+        """
+        Retorna (table, id_col, nome_col) que executa um SELECT simples com sucesso.
+        """
+        if not self.db.conectar():
+            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
+        try:
+            assert self.db.cursor is not None
+            for table, id_col, nome_col in candidates:
+                try:
+                    self.db.cursor.execute(
+                        f"SELECT {id_col}, {nome_col} FROM {table} LIMIT 1")
+                    self.db.cursor.fetchone()
+                    return (table, id_col, nome_col)
+                except Exception:
+                    continue
+            return None
+        finally:
+            self.db.desconectar()
+
+    def _ensure_joins_cached(self) -> None:
+        if self._prod_join is None:
+            self._prod_join = self._pick_first_working_join(
+                PRODUTOS_LOOKUP_CANDIDATES)
+        if self._cat_join is None:
+            self._cat_join = self._pick_first_working_join(
+                CATEGORIA_LOOKUP_CANDIDATES)
+        if self._for_join is None:
+            self._for_join = self._pick_first_working_join(
+                FORNECEDOR_LOOKUP_CANDIDATES)
 
     def listar(self, termo: Optional[str] = None, limit: int = 300) -> list[InfoProduto]:
         like = f"%{termo}%" if termo else None
 
-        sql_join = f"""
-            SELECT
-                i."estoqueMinimo", i."estoqueMaximo", i."estoqueLocalizacao", i."unidade",
-                i."pesoLiquido", i."pesoBruto", i."volumes", i."itensPorCaixa",
-                i."gtin", i."tipoProducao", i."marca", i."precoCompra",
-                i."largura", i."altura", i."profundidade",
-                i."unidadeMedida", i."fkFornecedor", i."fkCategoria", i."fkProduto",
-                p."nomeProduto"
-            FROM {INFO_TABLE} AS i
-            LEFT JOIN "Ekenox"."produtos" AS p
-                ON p."produtoId" = i."fkProduto"
-            WHERE (%s IS NULL)
-               OR (CAST(i."fkProduto" AS TEXT) ILIKE %s)
-               OR (COALESCE(i."gtin",'') ILIKE %s)
-               OR (COALESCE(i."marca",'') ILIKE %s)
-            ORDER BY i."fkProduto"
-            LIMIT %s
+        self._ensure_joins_cached()
+
+        # Campos base do InfoProduto (19 campos obrigatórios no SELECT)
+        base_select = """
+            i."estoqueMinimo", i."estoqueMaximo", i."estoqueLocalizacao", i."unidade",
+            i."pesoLiquido", i."pesoBruto", i."volumes", i."itensPorCaixa",
+            i."gtin", i."tipoProducao", i."marca", i."precoCompra",
+            i."largura", i."altura", i."profundidade",
+            i."unidadeMedida", i."fkFornecedor", i."fkCategoria", i."fkProduto"
         """
 
-        sql_nojoin = f"""
+        joins = []
+        extra_select = []
+
+        if self._prod_join:
+            pt, pid, pnome = self._prod_join
+            joins.append(f'LEFT JOIN {pt} AS p ON p.{pid} = i."fkProduto"')
+            extra_select.append(f"p.{pnome}::text AS nomeProduto")
+        else:
+            extra_select.append("NULL::text AS nomeProduto")
+
+        if self._cat_join:
+            ct, cid, cnome = self._cat_join
+            joins.append(f'LEFT JOIN {ct} AS c ON c.{cid} = i."fkCategoria"')
+            extra_select.append(f"c.{cnome}::text AS nomeCategoria")
+        else:
+            extra_select.append("NULL::text AS nomeCategoria")
+
+        if self._for_join:
+            ft, fid, fnome = self._for_join
+            joins.append(f'LEFT JOIN {ft} AS f ON f.{fid} = i."fkFornecedor"')
+            extra_select.append(f"f.{fnome}::text AS nomeFornecedor")
+        else:
+            extra_select.append("NULL::text AS nomeFornecedor")
+
+        sql = f"""
             SELECT
-                i."estoqueMinimo", i."estoqueMaximo", i."estoqueLocalizacao", i."unidade",
-                i."pesoLiquido", i."pesoBruto", i."volumes", i."itensPorCaixa",
-                i."gtin", i."tipoProducao", i."marca", i."precoCompra",
-                i."largura", i."altura", i."profundidade",
-                i."unidadeMedida", i."fkFornecedor", i."fkCategoria", i."fkProduto"
-            FROM {INFO_TABLE} AS i
+                {base_select},
+                {", ".join(extra_select)}
+            FROM {self.info_table} AS i
+            {" ".join(joins)}
             WHERE (%s IS NULL)
                OR (CAST(i."fkProduto" AS TEXT) ILIKE %s)
                OR (COALESCE(i."gtin",'') ILIKE %s)
@@ -489,19 +725,24 @@ class InfoProdutoRepo:
 
         try:
             assert self.db.cursor is not None
-            try:
-                self.db.cursor.execute(sql_join, params)
-                rows = self.db.cursor.fetchall()
-                return [InfoProduto(*row[:19], nomeProduto=row[19]) for row in rows]
-            except Exception:
-                self.db.cursor.execute(sql_nojoin, params)
-                rows = self.db.cursor.fetchall()
-                return [InfoProduto(*row, nomeProduto=None) for row in rows]
+            self.db.cursor.execute(sql, params)
+            rows = self.db.cursor.fetchall()
+
+            out: list[InfoProduto] = []
+            for row in rows:
+                # base 19 + 3 extras = 22
+                base = row[:19]
+                nome_prod = row[19] if len(row) > 19 else None
+                nome_cat = row[20] if len(row) > 20 else None
+                nome_for = row[21] if len(row) > 21 else None
+                out.append(InfoProduto(*base, nomeProduto=nome_prod,
+                           nomeCategoria=nome_cat, nomeFornecedor=nome_for))
+            return out
         finally:
             self.db.desconectar()
 
     def exists(self, fkProduto: int) -> bool:
-        sql = f'SELECT 1 FROM {INFO_TABLE} WHERE "fkProduto" = %s'
+        sql = f'SELECT 1 FROM {self.info_table} WHERE "fkProduto" = %s'
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
@@ -513,7 +754,7 @@ class InfoProdutoRepo:
 
     def inserir(self, i: InfoProduto) -> None:
         sql = f"""
-            INSERT INTO {INFO_TABLE}
+            INSERT INTO {self.info_table}
             ("estoqueMinimo","estoqueMaximo","estoqueLocalizacao","unidade",
              "pesoLiquido","pesoBruto","volumes","itensPorCaixa",
              "gtin","tipoProducao","marca","precoCompra",
@@ -539,12 +780,15 @@ class InfoProdutoRepo:
             assert self.db.cursor is not None
             self.db.cursor.execute(sql, params)
             self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         finally:
             self.db.desconectar()
 
     def atualizar(self, i: InfoProduto) -> None:
         sql = f"""
-            UPDATE {INFO_TABLE}
+            UPDATE {self.info_table}
                SET "estoqueMinimo" = %s,
                    "estoqueMaximo" = %s,
                    "estoqueLocalizacao" = %s,
@@ -578,17 +822,23 @@ class InfoProdutoRepo:
             assert self.db.cursor is not None
             self.db.cursor.execute(sql, params)
             self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         finally:
             self.db.desconectar()
 
     def excluir(self, fkProduto: int) -> None:
-        sql = f'DELETE FROM {INFO_TABLE} WHERE "fkProduto" = %s'
+        sql = f'DELETE FROM {self.info_table} WHERE "fkProduto" = %s'
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
             self.db.cursor.execute(sql, (fkProduto,))
             self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         finally:
             self.db.desconectar()
 
@@ -598,7 +848,7 @@ class InfoProdutoRepo:
         like = f"%{termo}%" if termo else None
         sql = f"""
             SELECT DISTINCT COALESCE(i."estoqueLocalizacao",'') AS local
-            FROM {INFO_TABLE} i
+            FROM {self.info_table} i
             WHERE COALESCE(i."estoqueLocalizacao",'') <> ''
               AND (%s IS NULL OR i."estoqueLocalizacao" ILIKE %s)
             ORDER BY local
@@ -618,20 +868,24 @@ class InfoProdutoRepo:
         self,
         candidates: list[tuple[str, str, str]],
         termo: Optional[str],
-        limit: int = 200,
+        limit: int = 300,
     ) -> list[tuple]:
         like = f"%{termo}%" if termo else None
+
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
+
         try:
             assert self.db.cursor is not None
+            last_err: Optional[str] = None
+
             for table, id_col, nome_col in candidates:
                 sql = f"""
                     SELECT {id_col}::text AS id, COALESCE({nome_col}::text,'') AS nome
                     FROM {table}
                     WHERE (%s IS NULL)
-                       OR ({id_col}::text ILIKE %s)
-                       OR (COALESCE({nome_col}::text,'') ILIKE %s)
+                    OR ({id_col}::text ILIKE %s)
+                    OR (COALESCE({nome_col}::text,'') ILIKE %s)
                     ORDER BY nome, id
                     LIMIT %s
                 """
@@ -639,18 +893,34 @@ class InfoProdutoRepo:
                     self.db.cursor.execute(sql, (termo, like, like, limit))
                     rows = self.db.cursor.fetchall()
                     return [(r[0], r[1]) for r in rows]
-                except Exception:
+
+                except Exception as e:
+                    # ✅ MUITO IMPORTANTE: limpar transação abortada
+                    self.db.rollback()
+                    last_err = f"{type(e).__name__}: {e}"
                     continue
+
             raise RuntimeError(
-                "Lookup não configurado: ajuste as listas de candidates.")
+                "Lookup não configurado (tabelas/colunas não encontradas). "
+                "Ajuste candidates. Detalhe: " + (last_err or "")
+            )
         finally:
             self.db.desconectar()
 
-    def lookup_categorias(self, termo: Optional[str], limit: int = 200) -> list[tuple]:
-        return self._try_lookup_table(CATEGORIA_LOOKUP_CANDIDATES, termo, limit)
+    def lookup_produtos(self, termo: Optional[str], limit: int = 400) -> list[tuple]:
+        return self._try_lookup_table(PRODUTOS_LOOKUP_CANDIDATES, termo, limit)
 
-    def lookup_fornecedores(self, termo: Optional[str], limit: int = 200) -> list[tuple]:
-        return self._try_lookup_table(FORNECEDOR_LOOKUP_CANDIDATES, termo, limit)
+    def lookup_categorias(self, termo: Optional[str], limit: int = 300) -> list[tuple]:
+        try:
+            return self._try_lookup_table(CATEGORIA_LOOKUP_CANDIDATES, termo, limit)
+        except Exception:
+            return self._auto_lookup(termo, limit, kind="categoria")
+
+    def lookup_fornecedores(self, termo: Optional[str], limit: int = 300) -> list[tuple]:
+        try:
+            return self._try_lookup_table(FORNECEDOR_LOOKUP_CANDIDATES, termo, limit)
+        except Exception:
+            return self._auto_lookup(termo, limit, kind="fornecedor")
 
 
 # ============================================================
@@ -716,6 +986,9 @@ class InfoProdutoService:
     def excluir(self, fkProduto: int) -> None:
         self.repo.excluir(fkProduto)
 
+    def lookup_produtos(self, termo: Optional[str]) -> list[tuple]:
+        return self.repo.lookup_produtos(termo)
+
     def lookup_categorias(self, termo: Optional[str]) -> list[tuple]:
         return self.repo.lookup_categorias(termo)
 
@@ -755,6 +1028,7 @@ CAMPOS = [
     ("profundidade", "Profundidade"),
 ]
 
+# Agora a grade mostra nomes também (quando houver)
 TREE_COLS = [
     "fkProduto", "nomeProduto",
     "gtin", "marca", "tipoProducao",
@@ -763,7 +1037,8 @@ TREE_COLS = [
     "itensPorCaixa", "volumes",
     "precoCompra", "pesoLiquido", "pesoBruto",
     "largura", "altura", "profundidade",
-    "fkFornecedor", "fkCategoria",
+    "fkFornecedor", "nomeFornecedor",
+    "fkCategoria", "nomeCategoria",
 ]
 
 
@@ -807,12 +1082,12 @@ class TelaInfoProduto(ttk.Frame):
         form = ttk.LabelFrame(self, text="InfoProduto")
         form.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
 
-        # 6 colunas = 3 campos por linha (label+campo) x3
         for c in range(6):
             form.columnconfigure(c, weight=1)
 
         # Linha 0
-        self._add_field(form, 0, 0, "fkProduto", width=14)
+        self._add_field(form, 0, 0, "fkProduto", width=14,
+                        with_button=self._buscar_produto)
         self._add_field(form, 0, 2, "fkCategoria", width=14,
                         with_button=self._buscar_categoria)
         self._add_field(form, 0, 4, "fkFornecedor", width=14,
@@ -884,22 +1159,30 @@ class TelaInfoProduto(ttk.Frame):
             "largura": "Larg",
             "altura": "Alt",
             "profundidade": "Prof",
-            "fkFornecedor": "Fornecedor",
-            "fkCategoria": "Categoria",
+            "fkFornecedor": "Fk Forn",
+            "nomeFornecedor": "Fornecedor",
+            "fkCategoria": "Fk Cat",
+            "nomeCategoria": "Categoria",
         }
         for col in TREE_COLS:
             self.tree.heading(col, text=headings.get(col, col))
 
-        self.tree.column("fkProduto", width=90, anchor="e", stretch=False)
-        self.tree.column("nomeProduto", width=260, anchor="w", stretch=True)
+        self.tree.column("fkProduto", width=95, anchor="e", stretch=False)
+        self.tree.column("nomeProduto", width=300, anchor="w", stretch=True)
         self.tree.column("gtin", width=150, anchor="w", stretch=False)
         self.tree.column("marca", width=140, anchor="w", stretch=False)
-        self.tree.column("tipoProducao", width=110, anchor="w", stretch=False)
+        self.tree.column("tipoProducao", width=120, anchor="w", stretch=False)
+
+        self.tree.column("fkFornecedor", width=95, anchor="e", stretch=False)
+        self.tree.column("nomeFornecedor", width=220, anchor="w", stretch=True)
+        self.tree.column("fkCategoria", width=95, anchor="e", stretch=False)
+        self.tree.column("nomeCategoria", width=220, anchor="w", stretch=True)
 
         for col in TREE_COLS:
-            if col in ("fkProduto", "nomeProduto", "gtin", "marca", "tipoProducao"):
+            if col in ("fkProduto", "nomeProduto", "gtin", "marca", "tipoProducao",
+                       "fkFornecedor", "nomeFornecedor", "fkCategoria", "nomeCategoria"):
                 continue
-            self.tree.column(col, width=95, anchor="e", stretch=False)
+            self.tree.column(col, width=100, anchor="e", stretch=False)
 
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
@@ -912,7 +1195,7 @@ class TelaInfoProduto(ttk.Frame):
         readonly: bool = False,
         colspan: int = 2,
         width: int | None = None,
-        widget: str = "entry",  # entry | combo
+        widget: str = "entry",
         combo_values: Optional[list[str]] = None,
         with_button: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -920,15 +1203,14 @@ class TelaInfoProduto(ttk.Frame):
         ttk.Label(parent, text=f"{label}:").grid(
             row=row, column=col, sticky="w", padx=(10, 6), pady=6)
 
-        # wrapper garante que o botão apareça SEM quebrar o grid original
         wrap = ttk.Frame(parent)
         wrap.grid(row=row, column=col + 1, sticky="ew",
                   padx=(0, 10), pady=6, columnspan=colspan - 1)
         wrap.columnconfigure(0, weight=1)
 
         if widget == "combo":
-            cb = ttk.Combobox(wrap, textvariable=self.vars[key],
-                              state="readonly" if readonly else "normal")
+            cb = ttk.Combobox(
+                wrap, textvariable=self.vars[key], state="readonly" if readonly else "normal")
             if combo_values:
                 cb["values"] = combo_values
             if width is not None:
@@ -944,7 +1226,6 @@ class TelaInfoProduto(ttk.Frame):
             field_widget = ent
 
         if with_button is not None:
-            # botão de busca
             ttk.Button(wrap, text="...", width=3, command=with_button).grid(
                 row=0, column=1, padx=(6, 0))
 
@@ -955,6 +1236,16 @@ class TelaInfoProduto(ttk.Frame):
 
     # -------- botões de busca --------
 
+    def _buscar_produto(self) -> None:
+        def fetch(term: Optional[str]) -> list[tuple]:
+            return self.service.lookup_produtos(term)
+
+        def pick(values: tuple) -> None:
+            self.vars["fkProduto"].set(str(values[0]))
+
+        LookupDialog(self, "Selecionar Produto", [
+                     "Identificador", "Nome"], fetch, pick, width=860, height=520)
+
     def _buscar_categoria(self) -> None:
         def fetch(term: Optional[str]) -> list[tuple]:
             return self.service.lookup_categorias(term)
@@ -963,7 +1254,7 @@ class TelaInfoProduto(ttk.Frame):
             self.vars["fkCategoria"].set(str(values[0]))
 
         LookupDialog(self, "Selecionar Categoria", [
-                     "ID", "Nome"], fetch, pick, width=780, height=460)
+                     "Identificador", "Nome"], fetch, pick, width=820, height=500)
 
     def _buscar_fornecedor(self) -> None:
         def fetch(term: Optional[str]) -> list[tuple]:
@@ -973,7 +1264,7 @@ class TelaInfoProduto(ttk.Frame):
             self.vars["fkFornecedor"].set(str(values[0]))
 
         LookupDialog(self, "Selecionar Fornecedor", [
-                     "ID", "Nome"], fetch, pick, width=780, height=460)
+                     "Identificador", "Nome"], fetch, pick, width=820, height=500)
 
     def _buscar_localizacao(self) -> None:
         def fetch(term: Optional[str]) -> list[tuple]:
@@ -983,7 +1274,7 @@ class TelaInfoProduto(ttk.Frame):
             self.vars["estoqueLocalizacao"].set(str(values[0]))
 
         LookupDialog(self, "Selecionar Localização", [
-                     "Localização"], fetch, pick, width=560, height=420)
+                     "Localização"], fetch, pick, width=600, height=450)
 
     def _buscar_unidade(self) -> None:
         def fetch(_term: Optional[str]) -> list[tuple]:
@@ -993,7 +1284,7 @@ class TelaInfoProduto(ttk.Frame):
             self.vars["unidade"].set(str(values[0]))
 
         LookupDialog(self, "Selecionar Unidade", [
-                     "Unidade"], fetch, pick, width=420, height=340)
+                     "Unidade"], fetch, pick, width=460, height=360)
 
     def _buscar_tipo(self) -> None:
         def fetch(_term: Optional[str]) -> list[tuple]:
@@ -1003,7 +1294,7 @@ class TelaInfoProduto(ttk.Frame):
             self.vars["tipoProducao"].set(str(values[0]))
 
         LookupDialog(self, "Selecionar Tipo Produção", [
-                     "Tipo"], fetch, pick, width=520, height=360)
+                     "Tipo"], fetch, pick, width=560, height=380)
 
     # -------- ações --------
 
@@ -1041,7 +1332,9 @@ class TelaInfoProduto(ttk.Frame):
                 str(it.altura),
                 str(it.profundidade),
                 "" if it.fkFornecedor is None else it.fkFornecedor,
+                it.nomeFornecedor or "",
                 "" if it.fkCategoria is None else it.fkCategoria,
+                it.nomeCategoria or "",
             ]
             self.tree.insert("", "end", values=values)
 
@@ -1051,6 +1344,7 @@ class TelaInfoProduto(ttk.Frame):
             return
         vals = self.tree.item(sel[0], "values")
 
+        # índices conforme TREE_COLS
         mapping = {
             "fkProduto": vals[0],
             "gtin": vals[2],
@@ -1070,7 +1364,7 @@ class TelaInfoProduto(ttk.Frame):
             "altura": vals[16],
             "profundidade": vals[17],
             "fkFornecedor": vals[18],
-            "fkCategoria": vals[19],
+            "fkCategoria": vals[20],
         }
 
         for k, _ in CAMPOS:
@@ -1138,6 +1432,9 @@ def test_connection_or_die(cfg: AppConfig) -> None:
 def main() -> None:
     cfg = env_override(load_config())
 
+    info_table = detectar_tabela(
+        cfg, INFO_TABLE_CANDIDATES, '"Ekenox"."infoProduto"')
+
     root = tk.Tk()
     root.title(APP_TITLE)
     root.geometry(DEFAULT_GEOMETRY)
@@ -1159,39 +1456,58 @@ def main() -> None:
             f"Host: {cfg.db_host}\nPorta: {cfg.db_port}\nBanco: {cfg.db_database}\nUsuário: {cfg.db_user}\n\n"
             f"Erro:\n{e}"
         )
-        root.destroy()
+        try:
+            root.destroy()
+        except Exception:
+            pass
         return
 
     db = Database(cfg)
-    repo = InfoProdutoRepo(db)
+    repo = InfoProdutoRepo(db, info_table=info_table)
     service = InfoProdutoService(repo)
 
     tela = TelaInfoProduto(root, service)
     tela.pack(fill="both", expand=True)
 
+    # ============================================================
+    # FECHAMENTO: fecha popups (release grab), reabre menu principal e fecha root
+    # ============================================================
     closing = {"done": False}
 
-    def open_menu_then_close():
+    def force_close():
         if closing["done"]:
             return
         closing["done"] = True
-        try:
-            abrir_menu_principal_skip_entrada()
-        finally:
-            try:
-                root.destroy()
-            except Exception:
-                pass
 
-    def on_close():
+        # fecha Toplevels e libera grab
         try:
-            root.withdraw()
-            root.update_idletasks()
+            for w in list(root.winfo_children()):
+                if isinstance(w, tk.Toplevel):
+                    try:
+                        w.grab_release()
+                    except Exception:
+                        pass
+                    try:
+                        w.destroy()
+                    except Exception:
+                        pass
         except Exception:
             pass
-        root.after(50, open_menu_then_close)
 
-    root.protocol("WM_DELETE_WINDOW", on_close)
+        # abre menu antes de destruir a janela
+        try:
+            abrir_menu_principal_skip_entrada()
+        except Exception:
+            pass
+
+        # fecha root normalmente (NÃO use os._exit)
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    # IMPORTANTE: protocol definido UMA VEZ, fora do callback
+    root.protocol("WM_DELETE_WINDOW", force_close)
     root.mainloop()
 
 

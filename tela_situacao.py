@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 """
-tela_categoria.py
+tela_situacao.py
 Python 3.12+ | Postgres 16+ | Tkinter + psycopg2 (sem pool)
 
-- CRUD completo de Categoria
-- Detecta automaticamente: tabela + colunas (id, nome, pai)
-- Popup para escolher Categoria Pai
+Tabela situacao (conforme imagem):
+  id (PK), nome, idHerdado (opcional)
+
+Recursos:
+- CRUD completo (inserir/atualizar/excluir/listar/buscar)
+- Popup para escolher "Situação Herdada" (idHerdado) na própria tabela
+- Config: BASE_DIR\\config_op.json + override DB_*
+- Log em BASE_DIR\\logs\\tela_situacao.log
+- Ícone favicon.ico/png (se existir)
 - Ao fechar: reabre menu_principal.py com --skip-entrada
+
+OBS:
+- O programa detecta automaticamente se a tabela é "situacao" ou "Ekenox.situacao"
 """
 
 import json
@@ -23,20 +32,8 @@ import psycopg2
 
 
 # ============================================================
-# TABELAS CANDIDATAS (NÃO FIXAR)
-# ============================================================
-
-CATEGORIA_TABLE_CANDIDATES = [
-    '"Ekenox"."categorias"',
-    '"Ekenox"."categoria"',
-    '"categorias"',
-    '"categoria"',
-]
-
-# ============================================================
 # PASTAS / BASE DIR
 # ============================================================
-
 
 def get_app_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -45,6 +42,7 @@ def get_app_dir() -> str:
 
 
 APP_DIR = get_app_dir()
+
 BASE_DIR = r"C:\Users\User\Desktop\Pyton\OrdemProducao"
 os.makedirs(BASE_DIR, exist_ok=True)
 
@@ -64,8 +62,8 @@ def _log_write(filename: str, msg: str) -> None:
         pass
 
 
-def log_categoria(msg: str) -> None:
-    _log_write("tela_categoria.log", msg)
+def log_situacao(msg: str) -> None:
+    _log_write("tela_situacao.log", msg)
 
 
 # ============================================================
@@ -102,7 +100,7 @@ def apply_window_icon(win) -> None:
         if png:
             img = tk.PhotoImage(file=png)
             win.iconphoto(True, img)
-            win._icon_img = img
+            win._icon_img = img  # mantém referência
     except Exception:
         pass
 
@@ -143,12 +141,64 @@ def env_override(cfg: AppConfig) -> AppConfig:
         "DB_DATABASE") or "").strip() or cfg.db_database
     user = (os.getenv("DB_USER") or "").strip() or cfg.db_user
     password = (os.getenv("DB_PASSWORD") or "").strip() or cfg.db_password
+
     try:
         port = int(port_s) if port_s else int(cfg.db_port)
     except ValueError:
         port = int(cfg.db_port)
 
-    return AppConfig(db_host=host, db_port=port, db_database=dbname, db_user=user, db_password=password)
+    return AppConfig(
+        db_host=host,
+        db_port=port,
+        db_database=dbname,
+        db_user=user,
+        db_password=password,
+    )
+
+
+# ============================================================
+# AUTO-DETECT TABELA (schema ou não)
+# ============================================================
+
+SITUACAO_TABLES = [
+    '"Ekenox"."situacao"',
+    '"situacao"',
+]
+
+
+def _table_exists(cfg: AppConfig, table_name: str) -> bool:
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=cfg.db_host,
+            database=cfg.db_database,
+            user=cfg.db_user,
+            password=cfg.db_password,
+            port=int(cfg.db_port),
+            connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
+        cur.fetchone()
+        cur.close()
+        conn.close()
+        return True
+    except Exception:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def detectar_tabela(cfg: AppConfig, candidates: List[str], fallback: str) -> str:
+    for t in candidates:
+        ok = _table_exists(cfg, t)
+        log_situacao(f"TABELA {'OK' if ok else 'FAIL'}: {t}")
+        if ok:
+            return t
+    return fallback
 
 
 # ============================================================
@@ -182,13 +232,6 @@ class Database:
     def commit(self) -> None:
         if self.conn:
             self.conn.commit()
-
-    def rollback(self) -> None:
-        try:
-            if self.conn:
-                self.conn.rollback()
-        except Exception:
-            pass
 
     def desconectar(self) -> None:
         try:
@@ -224,7 +267,8 @@ MENU_FILENAMES = [
 
 
 def localizar_menu_principal() -> Optional[str]:
-    for pasta in (APP_DIR, BASE_DIR):
+    pastas = [APP_DIR, BASE_DIR]
+    for pasta in pastas:
         for nome in MENU_FILENAMES:
             p = os.path.join(pasta, nome)
             if os.path.isfile(p):
@@ -246,12 +290,13 @@ def _python_gui_windows() -> str:
 def abrir_menu_principal_skip_entrada() -> None:
     menu_path = localizar_menu_principal()
     if not menu_path:
-        log_categoria(
+        log_situacao(
             f"MENU: não encontrado. APP_DIR={APP_DIR} BASE_DIR={BASE_DIR}")
         return
-    cwd = os.path.dirname(menu_path) or APP_DIR
 
     try:
+        cwd = os.path.dirname(menu_path) or APP_DIR
+
         if menu_path.lower().endswith(".exe"):
             if os.name == "nt":
                 os.startfile(menu_path)  # type: ignore[attr-defined]
@@ -269,87 +314,10 @@ def abrir_menu_principal_skip_entrada() -> None:
             popen_kwargs["start_new_session"] = True
 
         subprocess.Popen(cmd, **popen_kwargs)
-        log_categoria(f"MENU: iniciado -> {cmd}")
+        log_situacao(f"MENU: iniciado -> {cmd}")
+
     except Exception as e:
-        log_categoria(f"MENU: erro ao abrir: {type(e).__name__}: {e}")
-
-
-# ============================================================
-# DETECÇÃO AUTOMÁTICA: TABELA + COLUNAS
-# ============================================================
-
-@dataclass
-class CatSchema:
-    table: str
-    id_col: str
-    nome_col: str
-    pai_col: Optional[str]
-
-
-def _try_select(cfg: AppConfig, sql: str) -> bool:
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=cfg.db_host,
-            database=cfg.db_database,
-            user=cfg.db_user,
-            password=cfg.db_password,
-            port=int(cfg.db_port),
-            connect_timeout=5,
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        cur.fetchone()
-        cur.close()
-        conn.close()
-        return True
-    except Exception:
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-        return False
-
-
-def detectar_tabela(cfg: AppConfig, candidates: list[str]) -> str:
-    for t in candidates:
-        if _try_select(cfg, f"SELECT 1 FROM {t} LIMIT 1"):
-            return t
-    raise RuntimeError(
-        "Não foi possível localizar a tabela de categorias. Ajuste candidates.")
-
-
-def detectar_colunas_categoria(cfg: AppConfig, table: str) -> CatSchema:
-    """
-    Tenta encontrar colunas:
-    - id (categoriaId, id, categoria_id)
-    - nome (nomeCategoria, nome, descricao)
-    - pai (categoriaPai, pai, categoria_pai, parent_id) -> opcional
-    """
-    # tenta várias combinações em ordem
-    id_candidates = ['"categoriaId"', '"id"', '"categoria_id"']
-    nome_candidates = ['"nomeCategoria"', '"nome"',
-                       '"descricao"', '"nome_categoria"']
-    pai_candidates = ['"categoriaPai"', '"pai"',
-                      '"categoria_pai"', '"parent_id"', '"id_pai"']
-
-    for idc in id_candidates:
-        for nomec in nome_candidates:
-            # pai é opcional: primeiro tenta com pai, depois sem
-            for paic in pai_candidates + [None]:
-                if paic is None:
-                    sql = f"SELECT {idc}, {nomec} FROM {table} LIMIT 1"
-                else:
-                    sql = f"SELECT {idc}, {nomec}, {paic} FROM {table} LIMIT 1"
-                if _try_select(cfg, sql):
-                    return CatSchema(table=table, id_col=idc, nome_col=nomec, pai_col=paic)
-
-    raise RuntimeError(
-        "Não foi possível detectar colunas da tabela de categorias.\n"
-        f"Tabela: {table}\n"
-        "Tente ajustar candidatos de colunas."
-    )
+        log_situacao(f"MENU: erro ao abrir: {type(e).__name__}: {e}")
 
 
 # ============================================================
@@ -357,52 +325,56 @@ def detectar_colunas_categoria(cfg: AppConfig, table: str) -> CatSchema:
 # ============================================================
 
 @dataclass
-class Categoria:
-    categoriaId: int
-    nomeCategoria: str
-    categoriaPai: Optional[int]
+class Situacao:
+    id: int
+    nome: str
+    idHerdado: Optional[int]
+
+
+def _clean_text(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s != "" else None
 
 
 # ============================================================
 # REPOSITORY
 # ============================================================
 
-class CategoriaRepo:
-    def __init__(self, db: Database, schema: CatSchema) -> None:
+class SituacaoRepo:
+    def __init__(self, db: Database, table: str) -> None:
         self.db = db
-        self.schema = schema
+        self.table = table
 
-    def listar(self, termo: Optional[str] = None, limit: int = 600) -> List[Categoria]:
+    def proximo_id_preview(self) -> int:
+        sql = f'SELECT COALESCE(MAX("id"), 0) + 1 FROM {self.table};'
+        if not self.db.conectar():
+            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
+        try:
+            assert self.db.cursor is not None
+            self.db.cursor.execute(sql)
+            return int(self.db.cursor.fetchone()[0])
+        finally:
+            self.db.desconectar()
+
+    def listar(self, termo: Optional[str] = None, limit: int = 1200) -> List[Situacao]:
         like = f"%{termo}%" if termo else None
 
-        t = self.schema.table
-        idc = self.schema.id_col
-        nomec = self.schema.nome_col
-        paic = self.schema.pai_col
+        def ilike_text(expr_sql: str) -> str:
+            return f"COALESCE(CAST({expr_sql} AS TEXT),'') ILIKE %s"
 
-        if paic:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), {paic}
-                FROM {t} AS c
-                WHERE (%s IS NULL)
-                   OR (CAST({idc} AS TEXT) ILIKE %s)
-                   OR (COALESCE({nomec}::text,'') ILIKE %s)
-                   OR (CAST(COALESCE({paic},0) AS TEXT) ILIKE %s)
-                ORDER BY {idc} DESC
-                LIMIT %s
-            """
-            params = (termo, like, like, like, limit)
-        else:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), NULL
-                FROM {t} AS c
-                WHERE (%s IS NULL)
-                   OR (CAST({idc} AS TEXT) ILIKE %s)
-                   OR (COALESCE({nomec}::text,'') ILIKE %s)
-                ORDER BY {idc} DESC
-                LIMIT %s
-            """
-            params = (termo, like, like, limit)
+        sql = f"""
+            SELECT s."id", s."nome", s."idHerdado"
+            FROM {self.table} AS s
+            WHERE (%s IS NULL)
+               OR {ilike_text('s.\"id\"')}
+               OR {ilike_text('s.\"nome\"')}
+               OR {ilike_text('s.\"idHerdado\"')}
+            ORDER BY s."id" DESC
+            LIMIT %s
+        """
+        params = (termo, like, like, like, limit)
 
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
@@ -410,172 +382,115 @@ class CategoriaRepo:
             assert self.db.cursor is not None
             self.db.cursor.execute(sql, params)
             rows = self.db.cursor.fetchall()
-            out: List[Categoria] = []
+            out: List[Situacao] = []
             for r in rows:
-                cid = int(r[0])
-                nome = str(r[1] or "")
-                pai = None if (r[2] is None or str(
-                    r[2]).strip() in {"", "0"}) else int(r[2])
-                out.append(Categoria(cid, nome, pai))
+                out.append(Situacao(
+                    id=int(r[0]),
+                    nome=str(r[1] or ""),
+                    idHerdado=(int(r[2]) if r[2] is not None else None),
+                ))
             return out
         finally:
             self.db.desconectar()
 
-    def buscar_por_id(self, categoria_id: int) -> Optional[Categoria]:
-        t = self.schema.table
-        idc = self.schema.id_col
-        nomec = self.schema.nome_col
-        paic = self.schema.pai_col
-
-        if paic:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), {paic}
-                FROM {t}
-                WHERE {idc} = %s
-                LIMIT 1
-            """
-        else:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), NULL
-                FROM {t}
-                WHERE {idc} = %s
-                LIMIT 1
-            """
-
+    def buscar_por_id(self, sid: int) -> Optional[Situacao]:
+        sql = f"""
+            SELECT s."id", s."nome", s."idHerdado"
+            FROM {self.table} AS s
+            WHERE s."id" = %s
+            LIMIT 1
+        """
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
-            self.db.cursor.execute(sql, (categoria_id,))
+            self.db.cursor.execute(sql, (sid,))
             r = self.db.cursor.fetchone()
             if not r:
                 return None
-            cid = int(r[0])
-            nome = str(r[1] or "")
-            pai = None if (r[2] is None or str(r[2]).strip()
-                           in {"", "0"}) else int(r[2])
-            return Categoria(cid, nome, pai)
+            return Situacao(id=int(r[0]), nome=str(r[1] or ""), idHerdado=(int(r[2]) if r[2] is not None else None))
         finally:
             self.db.desconectar()
 
-    def existe_id(self, categoria_id: int) -> bool:
-        t = self.schema.table
-        idc = self.schema.id_col
-        sql = f"SELECT 1 FROM {t} WHERE {idc} = %s"
+    def existe_id(self, sid: int) -> bool:
+        sql = f'SELECT 1 FROM {self.table} WHERE "id"=%s'
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
-            self.db.cursor.execute(sql, (categoria_id,))
+            self.db.cursor.execute(sql, (sid,))
             return self.db.cursor.fetchone() is not None
         finally:
             self.db.desconectar()
 
-    def inserir(self, nome: str, pai: Optional[int]) -> int:
-        t = self.schema.table
-        idc = self.schema.id_col
-        nomec = self.schema.nome_col
-        paic = self.schema.pai_col
-
-        if paic:
-            sql = f"""
-                INSERT INTO {t} ({nomec}, {paic})
-                VALUES (%s,%s)
-                RETURNING {idc}
-            """
-            params = (nome, pai)
-        else:
-            sql = f"""
-                INSERT INTO {t} ({nomec})
-                VALUES (%s)
-                RETURNING {idc}
-            """
-            params = (nome,)
-
+    def inserir(self, nome: str, idHerdado: Optional[int]) -> int:
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
-            self.db.cursor.execute(sql, params)
-            new_id = self.db.cursor.fetchone()[0]
+
+            # trava a tabela durante a geração do próximo id e o insert
+            self.db.cursor.execute(
+                f'LOCK TABLE {self.table} IN EXCLUSIVE MODE;')
+            self.db.cursor.execute(
+                f'SELECT COALESCE(MAX("id"), 0) + 1 FROM {self.table};')
+            new_id = int(self.db.cursor.fetchone()[0])
+
+            sql = f"""
+                INSERT INTO {self.table} ("id","nome","idHerdado")
+                VALUES (%s,%s,%s)
+                RETURNING "id"
+            """
+            self.db.cursor.execute(sql, (new_id, nome, idHerdado))
+            rid = int(self.db.cursor.fetchone()[0])
             self.db.commit()
-            return int(new_id)
+            return rid
         finally:
             self.db.desconectar()
 
-    def atualizar(self, categoria_id: int, nome: str, pai: Optional[int]) -> None:
-        t = self.schema.table
-        idc = self.schema.id_col
-        nomec = self.schema.nome_col
-        paic = self.schema.pai_col
-
-        if paic:
-            sql = f"""
-                UPDATE {t}
-                   SET {nomec} = %s,
-                       {paic}  = %s
-                 WHERE {idc} = %s
-            """
-            params = (nome, pai, categoria_id)
-        else:
-            sql = f"""
-                UPDATE {t}
-                   SET {nomec} = %s
-                 WHERE {idc} = %s
-            """
-            params = (nome, categoria_id)
-
+    def atualizar(self, sid: int, nome: str, idHerdado: Optional[int]) -> None:
+        sql = f"""
+            UPDATE {self.table}
+               SET "nome"=%s,
+                   "idHerdado"=%s
+             WHERE "id"=%s
+        """
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
-            self.db.cursor.execute(sql, params)
+            self.db.cursor.execute(sql, (nome, idHerdado, sid))
             self.db.commit()
         finally:
             self.db.desconectar()
 
-    def excluir(self, categoria_id: int) -> None:
-        t = self.schema.table
-        idc = self.schema.id_col
-        sql = f"DELETE FROM {t} WHERE {idc} = %s"
+    def excluir(self, sid: int) -> None:
+        sql = f'DELETE FROM {self.table} WHERE "id"=%s'
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
-            self.db.cursor.execute(sql, (categoria_id,))
+            self.db.cursor.execute(sql, (sid,))
             self.db.commit()
         finally:
             self.db.desconectar()
 
-    def buscar_para_popup(self, termo: Optional[str], limit: int = 500) -> List[Tuple[int, str, Optional[int]]]:
+    def buscar_para_popup(self, termo: Optional[str], limit: int = 600) -> List[Tuple[int, str, Optional[int]]]:
         like = f"%{termo}%" if termo else None
-        t = self.schema.table
-        idc = self.schema.id_col
-        nomec = self.schema.nome_col
-        paic = self.schema.pai_col
 
-        if paic:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), {paic}
-                FROM {t} AS c
-                WHERE (%s IS NULL)
-                   OR (CAST({idc} AS TEXT) ILIKE %s)
-                   OR (COALESCE({nomec}::text,'') ILIKE %s)
-                ORDER BY COALESCE({nomec}::text,'')
-                LIMIT %s
-            """
-            params = (termo, like, like, limit)
-        else:
-            sql = f"""
-                SELECT {idc}::int, COALESCE({nomec}::text,''), NULL
-                FROM {t} AS c
-                WHERE (%s IS NULL)
-                   OR (CAST({idc} AS TEXT) ILIKE %s)
-                   OR (COALESCE({nomec}::text,'') ILIKE %s)
-                ORDER BY COALESCE({nomec}::text,'')
-                LIMIT %s
-            """
-            params = (termo, like, like, limit)
+        def ilike_text(expr_sql: str) -> str:
+            return f"COALESCE(CAST({expr_sql} AS TEXT),'') ILIKE %s"
+
+        sql = f"""
+            SELECT s."id", s."nome", s."idHerdado"
+            FROM {self.table} AS s
+            WHERE (%s IS NULL)
+               OR {ilike_text('s.\"id\"')}
+               OR {ilike_text('s.\"nome\"')}
+            ORDER BY s."nome"
+            LIMIT %s
+        """
+        params = (termo, like, like, limit)
 
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
@@ -585,11 +500,8 @@ class CategoriaRepo:
             rows = self.db.cursor.fetchall()
             out: List[Tuple[int, str, Optional[int]]] = []
             for r in rows:
-                cid = int(r[0])
-                nome = str(r[1] or "")
-                pai = None if (r[2] is None or str(
-                    r[2]).strip() in {"", "0"}) else int(r[2])
-                out.append((cid, nome, pai))
+                out.append((int(r[0]), str(r[1] or ""),
+                           (int(r[2]) if r[2] is not None else None)))
             return out
         finally:
             self.db.desconectar()
@@ -599,45 +511,44 @@ class CategoriaRepo:
 # SERVICE
 # ============================================================
 
-class CategoriaService:
-    def __init__(self, repo: CategoriaRepo) -> None:
+class SituacaoService:
+    def __init__(self, repo: SituacaoRepo) -> None:
         self.repo = repo
 
-    def listar(self, termo: Optional[str]) -> List[Categoria]:
+    def listar(self, termo: Optional[str]) -> List[Situacao]:
         termo = (termo or "").strip() or None
         return self.repo.listar(termo)
 
-    def validar(self, categoria_id: Optional[int], nome: str, pai: Optional[int]) -> None:
+    def validar(self, sid: Optional[int], nome: str, idHerdado: Optional[int]) -> None:
         nome = (nome or "").strip()
         if not nome:
-            raise ValueError("Nome da Categoria é obrigatório.")
+            raise ValueError("Nome é obrigatório.")
 
-        if pai is not None:
-            if pai <= 0:
-                raise ValueError("Categoria Pai inválida.")
-            if categoria_id is not None and pai == categoria_id:
-                raise ValueError(
-                    "Categoria Pai não pode ser igual à própria Categoria.")
-            if not self.repo.existe_id(pai):
-                raise ValueError(f"Categoria Pai ({pai}) não existe.")
+        if idHerdado is not None:
+            if idHerdado <= 0:
+                raise ValueError("idHerdado inválido.")
+            if sid is not None and idHerdado == sid:
+                raise ValueError("idHerdado não pode ser igual ao próprio id.")
+            if not self.repo.existe_id(idHerdado):
+                raise ValueError(f"idHerdado ({idHerdado}) não existe.")
 
-    def salvar(self, categoria_id: Optional[int], nome: str, pai: Optional[int]) -> Tuple[str, int]:
+    def salvar(self, id_original: Optional[int], nome: str, idHerdado: Optional[int]) -> Tuple[str, int]:
         nome = (nome or "").strip()
-        self.validar(categoria_id, nome, pai)
+        self.validar(id_original, nome, idHerdado)
 
-        if categoria_id is None:
-            new_id = self.repo.inserir(nome, pai)
+        if id_original is None:
+            new_id = self.repo.inserir(nome, idHerdado)
             return ("inserida", new_id)
 
-        if not self.repo.existe_id(categoria_id):
-            new_id = self.repo.inserir(nome, pai)
+        if not self.repo.existe_id(id_original):
+            new_id = self.repo.inserir(nome, idHerdado)
             return ("inserida", new_id)
 
-        self.repo.atualizar(categoria_id, nome, pai)
-        return ("atualizada", categoria_id)
+        self.repo.atualizar(id_original, nome, idHerdado)
+        return ("atualizada", id_original)
 
-    def excluir(self, categoria_id: int) -> None:
-        self.repo.excluir(categoria_id)
+    def excluir(self, sid: int) -> None:
+        self.repo.excluir(sid)
 
     def popup_buscar(self, termo: Optional[str]) -> List[Tuple[int, str, Optional[int]]]:
         termo = (termo or "").strip() or None
@@ -649,17 +560,23 @@ class CategoriaService:
 # ============================================================
 
 DEFAULT_GEOMETRY = "1000x650"
-APP_TITLE = "Tela de Categoria"
-TREE_COLS = ["categoriaId", "nomeCategoria", "categoriaPai"]
+APP_TITLE = "Tela de Situação"
+
+TREE_COLS = ["id", "nome", "idHerdado"]
 
 
-class CategoriaPaiPicker(tk.Toplevel):
-    def __init__(self, master: tk.Misc, service: CategoriaService, on_pick):
+class SituacaoPicker(tk.Toplevel):
+    """
+    Popup para escolher uma Situação (para preencher idHerdado).
+    Retorna (id, nome).
+    """
+
+    def __init__(self, master: tk.Misc, service: SituacaoService, on_pick):
         super().__init__(master)
         self.service = service
         self.on_pick = on_pick
 
-        self.title("Buscar Categoria Pai")
+        self.title("Buscar Situação (Herdado)")
         self.geometry("720x450")
         self.minsize(650, 380)
         apply_window_icon(self)
@@ -687,7 +604,7 @@ class CategoriaPaiPicker(tk.Toplevel):
         lst.columnconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(lst, columns=(
-            "id", "nome", "pai"), show="headings", selectmode="browse")
+            "id", "nome", "herd"), show="headings", selectmode="browse")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
         vsb = ttk.Scrollbar(lst, orient="vertical", command=self.tree.yview)
@@ -696,17 +613,19 @@ class CategoriaPaiPicker(tk.Toplevel):
 
         self.tree.heading("id", text="ID")
         self.tree.heading("nome", text="Nome")
-        self.tree.heading("pai", text="Pai")
+        self.tree.heading("herd", text="Herdado")
 
         self.tree.column("id", width=90, anchor="e", stretch=False)
         self.tree.column("nome", width=460, anchor="w", stretch=True)
-        self.tree.column("pai", width=90, anchor="e", stretch=False)
+        self.tree.column("herd", width=90, anchor="e", stretch=False)
 
         self.tree.bind("<Double-1>", lambda e: self._pick())
         self.tree.bind("<Return>", lambda e: self._pick())
 
         bottom = ttk.Frame(self, padding=10)
         bottom.grid(row=2, column=0, sticky="ew")
+        bottom.columnconfigure(0, weight=1)
+
         ttk.Button(bottom, text="Selecionar", command=self._pick).pack(
             side="right", padx=(8, 0))
         ttk.Button(bottom, text="Fechar",
@@ -726,35 +645,36 @@ class CategoriaPaiPicker(tk.Toplevel):
         try:
             rows = self.service.popup_buscar(termo)
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao buscar categorias:\n{e}")
+            messagebox.showerror("Erro", f"Falha ao buscar situações:\n{e}")
             return
 
-        for cid, nome, pai in rows:
+        for sid, nome, herd in rows:
             self.tree.insert("", "end", values=(
-                cid, nome, "" if pai is None else pai))
+                sid, nome, "" if herd is None else herd))
 
     def _pick(self) -> None:
         sel = self.tree.selection()
         if not sel:
-            messagebox.showwarning("Selecionar", "Selecione uma categoria.")
+            messagebox.showwarning("Selecionar", "Selecione uma situação.")
             return
-        cid, nome, _pai = self.tree.item(sel[0], "values")
+        sid, nome, _herd = self.tree.item(sel[0], "values")
         try:
-            self.on_pick(int(cid), str(nome))
+            self.on_pick(int(sid), str(nome))
         finally:
             self.destroy()
 
 
-class TelaCategoria(ttk.Frame):
-    def __init__(self, master: tk.Misc, service: CategoriaService):
+class TelaSituacao(ttk.Frame):
+    def __init__(self, master: tk.Misc, service: SituacaoService):
         super().__init__(master)
         self.service = service
 
         self.var_filtro = tk.StringVar()
+
         self.var_id = tk.StringVar()
         self.var_nome = tk.StringVar()
-        self.var_pai_id = tk.StringVar()
-        self.var_pai_nome = tk.StringVar()
+        self.var_herd_id = tk.StringVar()
+        self.var_herd_nome = tk.StringVar()
 
         self._id_original: Optional[int] = None
 
@@ -765,12 +685,13 @@ class TelaCategoria(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
 
+        # Topo
         top = ttk.Frame(self)
         top.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         top.columnconfigure(1, weight=1)
 
-        ttk.Label(top, text="Buscar (ID/Nome/Pai):").grid(row=0,
-                                                          column=0, sticky="w")
+        ttk.Label(top, text="Buscar (ID/Nome/Herdado):").grid(row=0,
+                                                              column=0, sticky="w")
         ent_busca = ttk.Entry(top, textvariable=self.var_filtro)
         ent_busca.grid(row=0, column=1, sticky="ew", padx=(6, 6))
         ent_busca.bind("<Return>", lambda e: self.atualizar_lista())
@@ -786,37 +707,43 @@ class TelaCategoria(ttk.Frame):
         ttk.Button(top, text="Limpar", command=self.limpar_form).grid(
             row=0, column=6)
 
-        form = ttk.LabelFrame(self, text="Categoria")
+        # Form
+        form = ttk.LabelFrame(self, text="Situação")
         form.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
-        for c in range(8):
+        for c in range(10):
             form.columnconfigure(c, weight=1)
 
         ttk.Label(form, text="ID:").grid(
             row=0, column=0, sticky="w", padx=(10, 6), pady=6)
         ttk.Entry(form, textvariable=self.var_id, state="readonly", width=10).grid(
-            row=0, column=1, sticky="w", padx=(0, 10), pady=6)
+            row=0, column=1, sticky="w", padx=(0, 10), pady=6
+        )
 
-        ttk.Label(form, text="Nome Categoria:").grid(
+        ttk.Label(form, text="Nome:").grid(
             row=0, column=2, sticky="w", padx=(10, 6), pady=6)
         ent_nome = ttk.Entry(form, textvariable=self.var_nome)
         ent_nome.grid(row=0, column=3, sticky="ew",
-                      padx=(0, 10), pady=6, columnspan=3)
+                      padx=(0, 10), pady=6, columnspan=5)
 
-        ttk.Label(form, text="Pai (ID):").grid(
+        ttk.Label(form, text="Herdado (ID):").grid(
             row=1, column=0, sticky="w", padx=(10, 6), pady=6)
-        ent_pai = ttk.Entry(form, textvariable=self.var_pai_id, width=12)
-        ent_pai.grid(row=1, column=1, sticky="w", padx=(0, 10), pady=6)
+        ent_herd = ttk.Entry(form, textvariable=self.var_herd_id, width=12)
+        ent_herd.grid(row=1, column=1, sticky="w", padx=(0, 10), pady=6)
 
-        ttk.Button(form, text="Buscar Pai...", command=self.buscar_pai_popup).grid(
-            row=1, column=2, sticky="w", padx=(0, 6), pady=6)
-        ttk.Button(form, text="Remover Pai", command=self.remover_pai).grid(
-            row=1, column=3, sticky="w", padx=(0, 6), pady=6)
+        ttk.Button(form, text="Buscar Herdado...", command=self.buscar_herdado_popup).grid(
+            row=1, column=2, sticky="w", padx=(0, 6), pady=6
+        )
+        ttk.Button(form, text="Remover Herdado", command=self.remover_herdado).grid(
+            row=1, column=3, sticky="w", padx=(0, 6), pady=6
+        )
 
-        ttk.Label(form, text="Pai (Nome):").grid(
+        ttk.Label(form, text="Herdado (Nome):").grid(
             row=1, column=4, sticky="w", padx=(10, 6), pady=6)
-        ttk.Entry(form, textvariable=self.var_pai_nome, state="readonly").grid(
-            row=1, column=5, sticky="ew", padx=(0, 10), pady=6, columnspan=3)
+        ttk.Entry(form, textvariable=self.var_herd_nome, state="readonly").grid(
+            row=1, column=5, sticky="ew", padx=(0, 10), pady=6, columnspan=4
+        )
 
+        # Lista
         lst = ttk.Frame(self)
         lst.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
         lst.rowconfigure(0, weight=1)
@@ -832,18 +759,20 @@ class TelaCategoria(ttk.Frame):
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
 
-        self.tree.heading("categoriaId", text="ID")
-        self.tree.heading("nomeCategoria", text="Nome Categoria")
-        self.tree.heading("categoriaPai", text="Pai")
+        self.tree.heading("id", text="ID")
+        self.tree.heading("nome", text="Nome")
+        self.tree.heading("idHerdado", text="Herdado")
 
-        self.tree.column("categoriaId", width=90, anchor="e", stretch=False)
-        self.tree.column("nomeCategoria", width=600, anchor="w", stretch=True)
-        self.tree.column("categoriaPai", width=90, anchor="e", stretch=False)
+        self.tree.column("id", width=90, anchor="e", stretch=False)
+        self.tree.column("nome", width=700, anchor="w", stretch=True)
+        self.tree.column("idHerdado", width=90, anchor="e", stretch=False)
 
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
+        # atalhos
         ent_nome.bind("<Return>", lambda e: self.salvar())
-        ent_pai.bind("<Return>", lambda e: self._preencher_nome_pai_por_id())
+        ent_herd.bind(
+            "<Return>", lambda e: self._preencher_nome_herdado_por_id())
 
     def atualizar_lista(self) -> None:
         termo = self.var_filtro.get().strip() or None
@@ -853,120 +782,124 @@ class TelaCategoria(ttk.Frame):
         try:
             rows = self.service.listar(termo)
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao listar categorias:\n{e}")
+            messagebox.showerror("Erro", f"Falha ao listar situações:\n{e}")
             return
 
-        for c in rows:
+        for s in rows:
             self.tree.insert("", "end", values=(
-                c.categoriaId, c.nomeCategoria, "" if c.categoriaPai is None else c.categoriaPai))
+                s.id, s.nome, "" if s.idHerdado is None else s.idHerdado))
 
     def on_select(self, _event=None) -> None:
         sel = self.tree.selection()
         if not sel:
             return
-        cid, nome, pai = self.tree.item(sel[0], "values")
+        sid, nome, herd = self.tree.item(sel[0], "values")
 
-        self._id_original = int(cid)
-        self.var_id.set(str(cid))
+        self._id_original = int(sid)
+        self.var_id.set(str(sid))
         self.var_nome.set(str(nome or ""))
 
-        pai_str = (str(pai).strip() if pai is not None else "")
-        if pai_str == "" or pai_str == "0":
-            self.var_pai_id.set("")
-            self.var_pai_nome.set("")
+        herd_str = (str(herd).strip() if herd is not None else "")
+        if herd_str == "" or herd_str == "0":
+            self.var_herd_id.set("")
+            self.var_herd_nome.set("")
         else:
-            self.var_pai_id.set(pai_str)
-            self._preencher_nome_pai_por_id()
+            self.var_herd_id.set(herd_str)
+            self._preencher_nome_herdado_por_id()
 
     def novo(self) -> None:
         self.limpar_form()
+        try:
+            nid = self.service.repo.proximo_id_preview()
+            self.var_id.set(str(nid))   # <-- aparece no campo ID
+        except Exception:
+            self.var_id.set("")
 
     def limpar_form(self) -> None:
         self._id_original = None
         self.var_id.set("")
         self.var_nome.set("")
-        self.var_pai_id.set("")
-        self.var_pai_nome.set("")
+        self.var_herd_id.set("")
+        self.var_herd_nome.set("")
         self.tree.selection_remove(self.tree.selection())
 
-    def remover_pai(self) -> None:
-        self.var_pai_id.set("")
-        self.var_pai_nome.set("")
+    def remover_herdado(self) -> None:
+        self.var_herd_id.set("")
+        self.var_herd_nome.set("")
 
-    def _preencher_nome_pai_por_id(self) -> None:
-        raw = (self.var_pai_id.get() or "").strip()
+    def _preencher_nome_herdado_por_id(self) -> None:
+        raw = (self.var_herd_id.get() or "").strip()
         if not raw:
-            self.var_pai_nome.set("")
+            self.var_herd_nome.set("")
             return
         try:
-            pid = int(raw)
+            hid = int(raw)
         except ValueError:
-            self.var_pai_nome.set("")
+            self.var_herd_nome.set("")
             return
 
         try:
-            cat = self.service.repo.buscar_por_id(pid)
+            sit = self.service.repo.buscar_por_id(hid)
         except Exception:
-            self.var_pai_nome.set("")
+            self.var_herd_nome.set("")
             return
 
-        if not cat:
-            self.var_pai_nome.set("(não encontrado)")
+        if not sit:
+            self.var_herd_nome.set("(não encontrado)")
         else:
-            self.var_pai_nome.set(cat.nomeCategoria)
+            self.var_herd_nome.set(sit.nome)
 
-    def buscar_pai_popup(self) -> None:
-        def on_pick(cid: int, nome: str) -> None:
-            self.var_pai_id.set(str(cid))
-            self.var_pai_nome.set(nome)
+    def buscar_herdado_popup(self) -> None:
+        def on_pick(sid: int, nome: str) -> None:
+            self.var_herd_id.set(str(sid))
+            self.var_herd_nome.set(nome)
 
-        CategoriaPaiPicker(self.winfo_toplevel(), self.service, on_pick)
+        SituacaoPicker(self.winfo_toplevel(), self.service, on_pick)
 
     def salvar(self) -> None:
         nome = self.var_nome.get()
-        pai_raw = (self.var_pai_id.get() or "").strip()
+        herd_raw = (self.var_herd_id.get() or "").strip()
 
-        pai: Optional[int]
-        if pai_raw == "" or pai_raw.lower() in {"none", "null"}:
-            pai = None
+        herd: Optional[int]
+        if herd_raw == "" or herd_raw.lower() in {"none", "null"}:
+            herd = None
         else:
             try:
-                pai = int(pai_raw)
+                herd = int(herd_raw)
             except ValueError:
                 messagebox.showerror(
-                    "Validação", "Categoria Pai (ID) deve ser número ou vazio.")
+                    "Validação", "Herdado (ID) deve ser número ou vazio.")
                 return
 
         try:
-            status, cid = self.service.salvar(self._id_original, nome, pai)
+            status, sid = self.service.salvar(self._id_original, nome, herd)
         except Exception as e:
             messagebox.showerror("Validação/Erro", str(e))
             return
 
-        messagebox.showinfo(
-            "OK", f"Categoria {status} com sucesso.\nID: {cid}")
+        messagebox.showinfo("OK", f"Situação {status} com sucesso.\nID: {sid}")
         self.atualizar_lista()
-        self._id_original = cid
-        self.var_id.set(str(cid))
-        self._preencher_nome_pai_por_id()
+        self._id_original = sid
+        self.var_id.set(str(sid))
+        self._preencher_nome_herdado_por_id()
 
     def excluir(self) -> None:
         if self._id_original is None:
             messagebox.showwarning(
-                "Atenção", "Selecione uma categoria para excluir.")
+                "Atenção", "Selecione uma situação para excluir.")
             return
 
-        cid = self._id_original
-        if not messagebox.askyesno("Confirmar", f"Excluir Categoria ID {cid}?"):
+        sid = self._id_original
+        if not messagebox.askyesno("Confirmar", f"Excluir Situação ID {sid}?"):
             return
 
         try:
-            self.service.excluir(cid)
+            self.service.excluir(sid)
         except Exception as e:
             messagebox.showerror("Erro", f"Falha ao excluir:\n{e}")
             return
 
-        messagebox.showinfo("OK", "Categoria excluída.")
+        messagebox.showinfo("OK", "Situação excluída.")
         self.limpar_form()
         self.atualizar_lista()
 
@@ -976,29 +909,32 @@ class TelaCategoria(ttk.Frame):
 # ============================================================
 
 def test_connection_or_die(cfg: AppConfig) -> None:
-    conn = psycopg2.connect(
-        host=cfg.db_host,
-        database=cfg.db_database,
-        user=cfg.db_user,
-        password=cfg.db_password,
-        port=int(cfg.db_port),
-        connect_timeout=5,
-    )
-    cur = conn.cursor()
-    cur.execute("SELECT 1")
-    cur.fetchone()
-    cur.close()
-    conn.close()
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=cfg.db_host,
+            database=cfg.db_database,
+            user=cfg.db_user,
+            password=cfg.db_password,
+            port=int(cfg.db_port),
+            connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        raise RuntimeError(f"{type(e).__name__}: {e}")
 
 
 def main() -> None:
     cfg = env_override(load_config())
-
-    # detecta tabela e colunas reais
-    table = detectar_tabela(cfg, CATEGORIA_TABLE_CANDIDATES)
-    schema = detectar_colunas_categoria(cfg, table)
-    log_categoria(
-        f"SCHEMA detectado: table={schema.table} id={schema.id_col} nome={schema.nome_col} pai={schema.pai_col}")
 
     root = tk.Tk()
     root.title(APP_TITLE)
@@ -1018,20 +954,22 @@ def main() -> None:
         messagebox.showerror(
             "Erro de conexão",
             "Não foi possível conectar ao banco.\n\n"
-            f"Host: {cfg.db_host}\nPorta: {cfg.db_port}\nBanco: {cfg.db_database}\nUsuário: {cfg.db_user}\n\n"
+            f"Host: {cfg.db_host}\n"
+            f"Porta: {cfg.db_port}\n"
+            f"Banco: {cfg.db_database}\n"
+            f"Usuário: {cfg.db_user}\n\n"
             f"Erro:\n{e}"
         )
-        try:
-            root.destroy()
-        except Exception:
-            pass
+        root.destroy()
         return
 
-    db = Database(cfg)
-    repo = CategoriaRepo(db, schema=schema)
-    service = CategoriaService(repo)
+    situacao_table = detectar_tabela(cfg, SITUACAO_TABLES, '"situacao"')
 
-    tela = TelaCategoria(root, service)
+    db = Database(cfg)
+    repo = SituacaoRepo(db, table=situacao_table)
+    service = SituacaoService(repo)
+
+    tela = TelaSituacao(root, service)
     tela.pack(fill="both", expand=True)
 
     closing = {"done": False}
@@ -1061,4 +999,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log_situacao(f"FATAL: {type(e).__name__}: {e}")
+        try:
+            messagebox.showerror(
+                "Erro", f"Falha ao iniciar tela_situacao:\n{type(e).__name__}: {e}")
+        except Exception:
+            pass
+        raise
