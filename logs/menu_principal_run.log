@@ -193,3 +193,157 @@ cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.
 cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
 cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py']
 popen_ok pid=21388
+=== abrir_menu_principal() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py']
+popen_ok pid=2724
+=== abrir_menu_principal() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py']
+popen_ok pid=5340
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=6296
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=21684
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=13792
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=20664
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=1376
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=21188
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=21656
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=3488
+=== abrir_menu_principal_skip_entrada() ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+menu_path=c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+
+
+=== START MENU PROCESS ===
+cwd=c:\Users\User\Desktop\Pyton\OrdemProducao
+cmd=['pythonw', 'c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+popen_ok pid=25296

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -140,6 +141,17 @@ def env_override(cfg: AppConfig) -> AppConfig:
 # DB
 # ============================================================
 
+def db_connect(cfg: AppConfig):
+    return psycopg2.connect(
+        host=cfg.db_host,
+        database=cfg.db_database,
+        user=cfg.db_user,
+        password=cfg.db_password,
+        port=int(cfg.db_port),
+        connect_timeout=5,
+    )
+
+
 class Database:
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
@@ -150,14 +162,7 @@ class Database:
     def conectar(self) -> bool:
         self.ultimo_erro = None
         try:
-            self.conn = psycopg2.connect(
-                host=self.cfg.db_host,
-                database=self.cfg.db_database,
-                user=self.cfg.db_user,
-                password=self.cfg.db_password,
-                port=int(self.cfg.db_port),
-                connect_timeout=5,
-            )
+            self.conn = db_connect(self.cfg)
             self.cursor = self.conn.cursor()
             return True
         except Exception as e:
@@ -193,7 +198,7 @@ class Database:
 
 
 # ============================================================
-# MENU PRINCIPAL (ao fechar)
+# MENU PRINCIPAL (mantido, mas NÃO abrimos menu no fechar)
 # ============================================================
 
 MENU_FILENAMES = [
@@ -230,6 +235,7 @@ def _python_gui_windows() -> str:
 
 
 def abrir_menu_principal_skip_entrada() -> None:
+    # Mantido por compatibilidade, mas não usado no fechamento.
     menu_path = localizar_menu_principal()
     if not menu_path:
         log_categoria(
@@ -277,14 +283,7 @@ CATEGORIA_TABLES = [
 def _table_exists(cfg: AppConfig, table_name: str) -> bool:
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=cfg.db_host,
-            database=cfg.db_database,
-            user=cfg.db_user,
-            password=cfg.db_password,
-            port=int(cfg.db_port),
-            connect_timeout=5,
-        )
+        conn = db_connect(cfg)
         cur = conn.cursor()
         cur.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
         cur.fetchone()
@@ -323,6 +322,151 @@ def _is_numeric_pg_type(typname: str) -> bool:
 
 
 # ============================================================
+# CONTROLE DE ACESSO (PERMISSÕES)
+# ============================================================
+
+# ajuste se no banco estiver "Categorias", etc.
+THIS_PROGRAMA_TERMO = "Categoria"
+
+NIVEL_LABEL = {
+    0: "0 - Sem acesso",
+    1: "1 - Leitura",
+    2: "2 - Edição",
+    3: "3 - Edição",
+}
+
+
+def _parse_cli_user() -> Optional[int]:
+    """
+    Aceita:
+      --usuario-id <id> (ou --uid <id>)
+    Se não vier, retorna None e a tela abre em NÍVEL 1 (Leitura).
+    """
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--usuario-id", "--uid", dest="usuario_id", type=int)
+    args, _ = parser.parse_known_args(sys.argv[1:])
+    return int(args.usuario_id) if args.usuario_id else None
+
+
+def _deny_and_exit(msg: str) -> None:
+    r = tk.Tk()
+    try:
+        r.withdraw()
+        messagebox.showerror("Acesso negado", msg, parent=r)
+    finally:
+        try:
+            r.destroy()
+        except Exception:
+            pass
+    raise SystemExit(1)
+
+
+def _user_esta_ativo(cfg: AppConfig, usuario_id: int) -> bool:
+    sql = 'SELECT COALESCE(u."ativo", true) FROM "Ekenox"."usuarios" u WHERE u."usuarioId"=%s LIMIT 1'
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id),))
+            r = cur.fetchone()
+        return bool(r[0]) if r else False
+    finally:
+        conn.close()
+
+
+def fetch_user_nome(cfg: AppConfig, usuario_id: int) -> str:
+    sql = """
+        SELECT COALESCE(u."nome",'')
+          FROM "Ekenox"."usuarios" u
+         WHERE u."usuarioId"=%s
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id),))
+            r = cur.fetchone()
+        return str(r[0] or "").strip() if r else ""
+    finally:
+        conn.close()
+
+
+def _fetch_programa_id_por_termo(cfg: AppConfig, termo: str) -> Optional[int]:
+    like = f"%{(termo or '').strip()}%"
+    if like == "%%":
+        return None
+    sql = """
+        SELECT pr."programaId"
+          FROM "Ekenox"."programas" pr
+         WHERE COALESCE(pr."nome",'') ILIKE %s
+            OR COALESCE(pr."codigo",'') ILIKE %s
+         ORDER BY pr."programaId" DESC
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (like, like))
+            r = cur.fetchone()
+        return int(r[0]) if r else None
+    finally:
+        conn.close()
+
+
+def _fetch_user_nivel(cfg: AppConfig, usuario_id: int, programa_id: int) -> int:
+    sql = """
+        SELECT COALESCE(up."nivel", 0)
+          FROM "Ekenox"."usuario_programa" up
+         WHERE up."usuarioId"=%s AND up."programaId"=%s
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id), int(programa_id)))
+            r = cur.fetchone()
+        return int(r[0] or 0) if r else 0
+    finally:
+        conn.close()
+
+
+def get_access_level_for_this_screen(cfg: AppConfig, usuario_id: int) -> Tuple[int, str]:
+    """
+    Regras:
+      - Usuário inativo => nega (0)
+      - Se programa não encontrado => abre N1 com aviso
+      - Se permissão não cadastrada (nivel<=0) => abre N1 com aviso
+      - Nivel 2 e 3 => edição (mesma regra)
+    """
+    if not _user_esta_ativo(cfg, usuario_id):
+        return 0, "Usuário inativo ou não encontrado."
+
+    pid = _fetch_programa_id_por_termo(cfg, THIS_PROGRAMA_TERMO)
+    if pid is None:
+        return 1, (
+            f'Atenção: não encontrei este programa na tabela "Ekenox"."programas".\n\n'
+            f'Termo usado: "{THIS_PROGRAMA_TERMO}"\n\n'
+            "Abrindo em NÍVEL 1 (Leitura). Cadastre o programa ou ajuste o termo."
+        )
+
+    nivel = _fetch_user_nivel(cfg, usuario_id, pid)
+    if nivel <= 0:
+        return 1, (
+            "Atenção: não existe permissão cadastrada para este usuário neste programa.\n\n"
+            f"Usuário ID: {usuario_id}\nPrograma ID: {pid}\n\n"
+            "Abrindo em NÍVEL 1 (Leitura)."
+        )
+
+    if nivel not in (1, 2, 3):
+        nivel = 1
+
+    # Nível 3 = edição também (igual nível 2)
+    if nivel == 3:
+        nivel = 3
+
+    return nivel, ""
+
+
+# ============================================================
 # MODEL
 # ============================================================
 
@@ -342,7 +486,6 @@ class CategoriaRepo:
         self.db = db
         self.categoria_table = categoria_table
 
-        # pk e colunas mais comuns
         self.pk_col = self._find_primary_key_column() or self._find_existing_column(
             ["codigo", "categoriaId", "idCategoria", "id", "Codigo"]
         ) or "codigo"
@@ -437,7 +580,6 @@ class CategoriaRepo:
         finally:
             self.db.desconectar()
 
-    # ✅ NEXT CODE = MAX + 1 (a partir do último número)
     def proximo_codigo(self) -> int:
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
@@ -449,7 +591,6 @@ class CategoriaRepo:
                 sql = f"SELECT COALESCE(MAX({pk})::bigint, 0) + 1 FROM {self.categoria_table}"
                 self.db.cursor.execute(sql)
             else:
-                # pega apenas números do texto e faz max
                 sql = f"""
                     SELECT COALESCE(
                         MAX((NULLIF(regexp_replace({pk}::text,'[^0-9]','','g'),'') )::bigint),
@@ -535,7 +676,7 @@ class CategoriaRepo:
         pai = _qident(self.pai_col)
 
         codigo_param = codigo_int if self.pk_is_numeric else str(codigo_int)
-        pai_param = (pai_txt or "").strip() or None  # pai pode ser NULL
+        pai_param = (pai_txt or "").strip() or None
 
         sql = f"""
             INSERT INTO {self.categoria_table} ({pk},{nm},{pai})
@@ -631,7 +772,6 @@ class CategoriaService:
             codigo_salvo = self.repo.inserir(codigo_int, nome, pai_txt)
             return ("inserido", codigo_salvo)
 
-        # código digitado: se for numérico ok; se não, exige usar NOVO
         try:
             int(codigo_txt)
         except ValueError:
@@ -736,9 +876,21 @@ class SeletorPai(tk.Toplevel):
 
 
 class TelaCategoria(ttk.Frame):
-    def __init__(self, master: tk.Misc, service: CategoriaService):
+    def __init__(
+        self,
+        master: tk.Misc,
+        service: CategoriaService,
+        *,
+        usuario_logado_id: int,
+        acesso_nivel: int,
+        usuario_logado_nome: str = "",
+    ):
         super().__init__(master)
         self.service = service
+
+        self.usuario_logado_id = int(usuario_logado_id)
+        self.acesso_nivel = int(acesso_nivel)
+        self.usuario_logado_nome = (usuario_logado_nome or "").strip()
 
         self.var_filtro = tk.StringVar()
         self.var_codigo = tk.StringVar()
@@ -746,15 +898,70 @@ class TelaCategoria(ttk.Frame):
         self.var_pai_id = tk.StringVar()
         self.var_pai_nome = tk.StringVar()
 
+        self._lbl_access: Optional[ttk.Label] = None
+        self._ent_codigo: Optional[ttk.Entry] = None
+        self._ent_nome: Optional[ttk.Entry] = None
+        self._ent_pai_id: Optional[ttk.Entry] = None
+
+        self._btn_novo: Optional[ttk.Button] = None
+        self._btn_salvar: Optional[ttk.Button] = None
+        self._btn_excluir: Optional[ttk.Button] = None
+        self._btn_buscar_pai: Optional[ttk.Button] = None
+        self._btn_remover_pai: Optional[ttk.Button] = None
+
         self._build_ui()
         self.atualizar_lista()
+        self._apply_access_rules()
+
+    def _can_edit(self) -> bool:
+        # Regra pedida: 1 leitura / 2 edição / 3 edição também
+        return self.acesso_nivel >= 2
+
+    def _apply_access_rules(self) -> None:
+        can_edit = self._can_edit()
+
+        if self._lbl_access:
+            nome = self.usuario_logado_nome or (
+                f"ID {self.usuario_logado_id}" if self.usuario_logado_id else "Não informado")
+            nivel_txt = NIVEL_LABEL.get(
+                self.acesso_nivel, str(self.acesso_nivel))
+            self._lbl_access.config(
+                text=f"Logado: {nome} | Nível: {nivel_txt}",
+                foreground=("green" if self.acesso_nivel >= 2 else "gray"),
+            )
+
+        # Campos: readonly no nível 1
+        if self._ent_codigo:
+            self._ent_codigo.configure(
+                state=("normal" if can_edit else "readonly"))
+        if self._ent_nome:
+            self._ent_nome.configure(
+                state=("normal" if can_edit else "readonly"))
+        if self._ent_pai_id:
+            self._ent_pai_id.configure(
+                state=("normal" if can_edit else "readonly"))
+
+        # Botões que alteram dados
+        for btn in (self._btn_novo, self._btn_salvar, self._btn_excluir, self._btn_buscar_pai, self._btn_remover_pai):
+            if btn:
+                btn.state(["!disabled"] if can_edit else ["disabled"])
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
 
+        # Barra de status / permissões
+        bar = ttk.Frame(self)
+        bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        bar.columnconfigure(0, weight=1)
+
+        self._lbl_access = ttk.Label(
+            bar, text="", foreground="gray", font=("Segoe UI", 9, "bold"))
+        self._lbl_access.grid(row=0, column=0, sticky="w")
+
+        # Topo (busca + botões)
         top = ttk.Frame(self)
-        top.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        top.grid(row=1, column=0, sticky="ew", padx=10, pady=(6, 6))
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="Buscar (Código/Nome/Pai):").grid(row=0,
@@ -765,47 +972,65 @@ class TelaCategoria(ttk.Frame):
 
         ttk.Button(top, text="Atualizar", command=self.atualizar_lista).grid(
             row=0, column=2, padx=(0, 6))
-        ttk.Button(top, text="Novo", command=self.novo).grid(
-            row=0, column=3, padx=(0, 6))
-        ttk.Button(top, text="Salvar", command=self.salvar).grid(
-            row=0, column=4, padx=(0, 6))
-        ttk.Button(top, text="Excluir", command=self.excluir).grid(
-            row=0, column=5, padx=(0, 6))
+
+        self._btn_novo = ttk.Button(top, text="Novo", command=self.novo)
+        self._btn_novo.grid(row=0, column=3, padx=(0, 6))
+
+        self._btn_salvar = ttk.Button(top, text="Salvar", command=self.salvar)
+        self._btn_salvar.grid(row=0, column=4, padx=(0, 6))
+
+        self._btn_excluir = ttk.Button(
+            top, text="Excluir", command=self.excluir)
+        self._btn_excluir.grid(row=0, column=5, padx=(0, 6))
+
         ttk.Button(top, text="Limpar", command=self.limpar_form).grid(
             row=0, column=6)
 
+        # Form
         form = ttk.LabelFrame(self, text="Categoria")
-        form.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+        form.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 8))
         for c in range(12):
             form.columnconfigure(c, weight=1)
 
         ttk.Label(form, text="Código:").grid(
             row=0, column=0, sticky="w", padx=(10, 6), pady=6)
-        ttk.Entry(form, textvariable=self.var_codigo, width=14).grid(
-            row=0, column=1, sticky="w", padx=(0, 10), pady=6)
+        self._ent_codigo = ttk.Entry(
+            form, textvariable=self.var_codigo, width=14)
+        self._ent_codigo.grid(row=0, column=1, sticky="w",
+                              padx=(0, 10), pady=6)
 
         ttk.Label(form, text="Nome Categoria:").grid(
             row=0, column=3, sticky="w", padx=(10, 6), pady=6)
-        ttk.Entry(form, textvariable=self.var_nome).grid(
-            row=0, column=4, sticky="ew", padx=(0, 10), pady=6, columnspan=8)
+        self._ent_nome = ttk.Entry(form, textvariable=self.var_nome)
+        self._ent_nome.grid(row=0, column=4, sticky="ew",
+                            padx=(0, 10), pady=6, columnspan=8)
 
         ttk.Label(form, text="Pai (ID):").grid(
             row=1, column=0, sticky="w", padx=(10, 6), pady=6)
-        ttk.Entry(form, textvariable=self.var_pai_id, width=14).grid(
-            row=1, column=1, sticky="w", padx=(0, 10), pady=6)
+        self._ent_pai_id = ttk.Entry(
+            form, textvariable=self.var_pai_id, width=14)
+        self._ent_pai_id.grid(row=1, column=1, sticky="w",
+                              padx=(0, 10), pady=6)
 
-        ttk.Button(form, text="Buscar Pai...", command=self.buscar_pai).grid(
+        self._btn_buscar_pai = ttk.Button(
+            form, text="Buscar Pai...", command=self.buscar_pai)
+        self._btn_buscar_pai.grid(
             row=1, column=2, sticky="w", padx=(0, 10), pady=6)
-        ttk.Button(form, text="Remover Pai", command=self.remover_pai).grid(
+
+        self._btn_remover_pai = ttk.Button(
+            form, text="Remover Pai", command=self.remover_pai)
+        self._btn_remover_pai.grid(
             row=1, column=3, sticky="w", padx=(0, 10), pady=6)
 
         ttk.Label(form, text="Pai (Nome):").grid(
             row=1, column=4, sticky="w", padx=(10, 6), pady=6)
         ttk.Entry(form, textvariable=self.var_pai_nome, state="readonly").grid(
-            row=1, column=5, sticky="ew", padx=(0, 10), pady=6, columnspan=7)
+            row=1, column=5, sticky="ew", padx=(0, 10), pady=6, columnspan=7
+        )
 
+        # Lista
         lst = ttk.Frame(self)
-        lst.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        lst.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
         lst.rowconfigure(0, weight=1)
         lst.columnconfigure(0, weight=1)
 
@@ -864,6 +1089,10 @@ class TelaCategoria(ttk.Frame):
             self.var_pai_nome.set("")
 
     def buscar_pai(self):
+        if not self._can_edit():
+            messagebox.showwarning("Acesso", "Seu nível é somente leitura.")
+            return
+
         def picked(cod, nome):
             self.var_pai_id.set(cod)
             self.var_pai_nome.set(nome)
@@ -871,6 +1100,9 @@ class TelaCategoria(ttk.Frame):
         SeletorPai(self.winfo_toplevel(), self.service, picked)
 
     def remover_pai(self):
+        if not self._can_edit():
+            messagebox.showwarning("Acesso", "Seu nível é somente leitura.")
+            return
         self.var_pai_id.set("")
         self.var_pai_nome.set("")
 
@@ -882,7 +1114,10 @@ class TelaCategoria(ttk.Frame):
         self.tree.selection_remove(self.tree.selection())
 
     def novo(self) -> None:
-        # ✅ AQUI: gera o próximo código automaticamente (MAX + 1)
+        if not self._can_edit():
+            messagebox.showwarning("Acesso", "Seu nível é somente leitura.")
+            return
+
         self.limpar_form()
         try:
             prox = self.service.proximo_codigo()
@@ -892,6 +1127,10 @@ class TelaCategoria(ttk.Frame):
                 "Erro", f"Falha ao gerar próximo código:\n{e}")
 
     def salvar(self) -> None:
+        if not self._can_edit():
+            messagebox.showwarning("Acesso", "Seu nível é somente leitura.")
+            return
+
         try:
             status, codigo = self.service.salvar(
                 self.var_codigo.get(),
@@ -909,6 +1148,10 @@ class TelaCategoria(ttk.Frame):
         self.atualizar_lista()
 
     def excluir(self) -> None:
+        if not self._can_edit():
+            messagebox.showwarning("Acesso", "Seu nível é somente leitura.")
+            return
+
         codigo = (self.var_codigo.get() or "").strip()
         if not codigo:
             messagebox.showwarning(
@@ -936,14 +1179,7 @@ class TelaCategoria(ttk.Frame):
 def test_connection_or_die(cfg: AppConfig) -> None:
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=cfg.db_host,
-            database=cfg.db_database,
-            user=cfg.db_user,
-            password=cfg.db_password,
-            port=int(cfg.db_port),
-            connect_timeout=5,
-        )
+        conn = db_connect(cfg)
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.fetchone()
@@ -960,6 +1196,25 @@ def test_connection_or_die(cfg: AppConfig) -> None:
 
 def main() -> None:
     cfg = env_override(load_config())
+
+    # Descobre usuário e permissão (se não vier, abre em leitura)
+    cli_user_id = _parse_cli_user()
+
+    if cli_user_id is None:
+        usuario_id = 0
+        nivel = 1
+        aviso = (
+            "Atenção: usuário não informado ao abrir a tela.\n\n"
+            "Abrindo em NÍVEL 1 (Leitura).\n"
+            "Para respeitar permissões reais, chame com --usuario-id <id>."
+        )
+        usuario_nome = ""
+    else:
+        usuario_id = int(cli_user_id)
+        nivel, aviso = get_access_level_for_this_screen(cfg, usuario_id)
+        if nivel <= 0:
+            _deny_and_exit(aviso)
+        usuario_nome = fetch_user_nome(cfg, usuario_id)
 
     root = tk.Tk()
     root.title(APP_TITLE)
@@ -994,32 +1249,21 @@ def main() -> None:
     repo = CategoriaRepo(db, categoria_table=categoria_table)
     service = CategoriaService(repo)
 
-    tela = TelaCategoria(root, service)
+    tela = TelaCategoria(
+        root,
+        service,
+        usuario_logado_id=usuario_id,
+        acesso_nivel=nivel,
+        usuario_logado_nome=usuario_nome,
+    )
     tela.pack(fill="both", expand=True)
 
-    closing = {"done": False}
+    if aviso:
+        root.after(200, lambda: messagebox.showwarning(
+            "Aviso", aviso, parent=root))
 
-    def open_menu_then_close():
-        if closing["done"]:
-            return
-        closing["done"] = True
-        try:
-            abrir_menu_principal_skip_entrada()
-        finally:
-            try:
-                root.destroy()
-            except Exception:
-                pass
-
-    def on_close():
-        try:
-            root.withdraw()
-            root.update_idletasks()
-        except Exception:
-            pass
-        root.after(50, open_menu_then_close)
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
+    # Fechamento: NÃO abre menu novo. Apenas fecha esta tela.
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
 
 

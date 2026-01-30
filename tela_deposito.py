@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -23,7 +24,6 @@ def get_app_dir() -> str:
 
 
 APP_DIR = get_app_dir()
-
 BASE_DIR = r"C:\Users\User\Desktop\Pyton\OrdemProducao"
 os.makedirs(BASE_DIR, exist_ok=True)
 
@@ -137,8 +137,19 @@ def env_override(cfg: AppConfig) -> AppConfig:
     )
 
 
+def db_connect(cfg: AppConfig):
+    return psycopg2.connect(
+        host=cfg.db_host,
+        database=cfg.db_database,
+        user=cfg.db_user,
+        password=cfg.db_password,
+        port=int(cfg.db_port),
+        connect_timeout=5,
+    )
+
+
 # ============================================================
-# DB
+# DB "mini helper"
 # ============================================================
 
 class Database:
@@ -151,14 +162,7 @@ class Database:
     def conectar(self) -> bool:
         self.ultimo_erro = None
         try:
-            self.conn = psycopg2.connect(
-                host=self.cfg.db_host,
-                database=self.cfg.db_database,
-                user=self.cfg.db_user,
-                password=self.cfg.db_password,
-                port=int(self.cfg.db_port),
-                connect_timeout=5,
-            )
+            self.conn = db_connect(self.cfg)
             self.cursor = self.conn.cursor()
             return True
         except Exception as e:
@@ -194,7 +198,7 @@ class Database:
 
 
 # ============================================================
-# MENU PRINCIPAL (ao fechar)
+# MENU PRINCIPAL
 # ============================================================
 
 MENU_FILENAMES = [
@@ -210,8 +214,7 @@ MENU_FILENAMES = [
 
 
 def localizar_menu_principal() -> Optional[str]:
-    pastas = [APP_DIR, BASE_DIR]
-    for pasta in pastas:
+    for pasta in (APP_DIR, BASE_DIR):
         for nome in MENU_FILENAMES:
             p = os.path.join(pasta, nome)
             if os.path.isfile(p):
@@ -264,6 +267,128 @@ def abrir_menu_principal_skip_entrada() -> None:
 
 
 # ============================================================
+# CONTROLE DE ACESSO (igual Arranjo)
+# ============================================================
+
+# ajuste aqui se no seu cadastro o nome/código for diferente
+THIS_PROGRAMA_TERMO = "Depósito"
+
+NIVEL_LABEL = {
+    0: "0 - Sem acesso",
+    1: "1 - Leitura",
+    2: "2 - Edição",
+    3: "3 - Edição",
+}
+
+
+def _deny_and_exit(msg: str) -> None:
+    r = tk.Tk()
+    try:
+        r.withdraw()
+        messagebox.showerror("Acesso negado", msg, parent=r)
+    finally:
+        try:
+            r.destroy()
+        except Exception:
+            pass
+    raise SystemExit(1)
+
+
+def fetch_user_nome(cfg: AppConfig, usuario_id: int) -> str:
+    sql = """
+        SELECT COALESCE(u."nome",'')
+          FROM "Ekenox"."usuarios" u
+         WHERE u."usuarioId"=%s
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id),))
+            r = cur.fetchone()
+        return str(r[0] or "").strip() if r else ""
+    finally:
+        conn.close()
+
+
+def _user_esta_ativo(cfg: AppConfig, usuario_id: int) -> bool:
+    sql = 'SELECT COALESCE(u."ativo", true) FROM "Ekenox"."usuarios" u WHERE u."usuarioId"=%s LIMIT 1'
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id),))
+            r = cur.fetchone()
+        return bool(r[0]) if r else False
+    finally:
+        conn.close()
+
+
+def _fetch_programa_id_por_termo(cfg: AppConfig, termo: str) -> Optional[int]:
+    like = f"%{(termo or '').strip()}%"
+    if like == "%%":
+        return None
+
+    sql = """
+        SELECT pr."programaId"
+          FROM "Ekenox"."programas" pr
+         WHERE COALESCE(pr."nome",'') ILIKE %s
+            OR COALESCE(pr."codigo",'') ILIKE %s
+         ORDER BY pr."programaId" DESC
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (like, like))
+            r = cur.fetchone()
+        return int(r[0]) if r else None
+    finally:
+        conn.close()
+
+
+def _fetch_user_nivel(cfg: AppConfig, usuario_id: int, programa_id: int) -> int:
+    sql = """
+        SELECT COALESCE(up."nivel", 0)
+          FROM "Ekenox"."usuario_programa" up
+         WHERE up."usuarioId"=%s AND up."programaId"=%s
+         LIMIT 1
+    """
+    conn = db_connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(usuario_id), int(programa_id)))
+            r = cur.fetchone()
+        return int(r[0] or 0) if r else 0
+    finally:
+        conn.close()
+
+
+def get_access_level_for_this_screen(cfg: AppConfig, usuario_id: int) -> Tuple[int, str]:
+    if not _user_esta_ativo(cfg, usuario_id):
+        return 0, "Usuário inativo ou não encontrado."
+
+    pid = _fetch_programa_id_por_termo(cfg, THIS_PROGRAMA_TERMO)
+    if pid is None:
+        return 1, (
+            f'Atenção: não encontrei este programa na tabela "Ekenox"."programas".\n\n'
+            f'Termo usado: "{THIS_PROGRAMA_TERMO}"\n\n'
+            "Abrindo em NÍVEL 1 (Leitura). Cadastre o programa ou ajuste o termo."
+        )
+
+    nivel = _fetch_user_nivel(cfg, usuario_id, pid)
+    if nivel <= 0:
+        return 1, (
+            "Atenção: não existe permissão cadastrada para este usuário neste programa.\n\n"
+            f"Usuário ID: {usuario_id}\nPrograma ID: {pid}\n\n"
+            "Abrindo em NÍVEL 1 (Leitura)."
+        )
+
+    if nivel not in (1, 2, 3):
+        nivel = 1
+    return nivel, ""
+
+
+# ============================================================
 # AUTO-DETECT TABELAS
 # ============================================================
 
@@ -278,14 +403,7 @@ DEPOSITO_TABLES = [
 def _table_exists(cfg: AppConfig, table_name: str) -> bool:
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=cfg.db_host,
-            database=cfg.db_database,
-            user=cfg.db_user,
-            password=cfg.db_password,
-            port=int(cfg.db_port),
-            connect_timeout=5,
-        )
+        conn = db_connect(cfg)
         cur = conn.cursor()
         cur.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
         cur.fetchone()
@@ -354,29 +472,19 @@ class DepositoRepo:
         self.db = db
         self.deposito_table = deposito_table
 
-        # tenta achar PK real; se não achar, assume "codigo"
         self.pk_col = self._find_primary_key_column() or "codigo"
         self.pk_typname = self._col_typname(self.deposito_table, self.pk_col)
         self.pk_is_numeric = _is_numeric_pg_type(self.pk_typname)
 
-        # colunas prováveis
         self.col_descricao = self._find_existing_column(
-            ["descricao", "descricaoDeposito", "desc", "Descrição"])
+            ["descricao", "descricaoDeposito", "desc", "Descrição"]) or "descricao"
         self.col_ativo = self._find_existing_column(
-            ["ativo", "situacao", "status", "Ativo"])
+            ["ativo", "situacao", "status", "Ativo"]) or "ativo"
         self.col_padrao = self._find_existing_column(
-            ["padrao", "default", "Padrao"])
+            ["padrao", "default", "Padrao"]) or "padrao"
         self.col_desconsidera = self._find_existing_column(
-            ["desconsiderarsaldo", "desconsideraSaldo", "ignorasaldo"])
+            ["desconsiderarsaldo", "desconsideraSaldo", "ignorasaldo"]) or "desconsideraSaldo"
 
-        # fallback mínimo
-        self.col_descricao = self.col_descricao or "descricao"
-        self.col_ativo = self.col_ativo or "ativo"
-        self.col_padrao = self.col_padrao or "padrao"
-        self.col_desconsidera = self.col_desconsidera or "desconsideraSaldo"
-
-        # tipos (pra gravar sem dar mismatch)
-        self.ativo_is_bool = _is_numeric_pg_type("bool") and False  # dummy
         self.ativo_is_bool = (self._col_typname(
             self.deposito_table, self.col_ativo).lower() == "bool")
         self.padrao_is_bool = (self._col_typname(
@@ -466,128 +574,22 @@ class DepositoRepo:
     def _pk_param(self, codigo_int: int) -> Any:
         return codigo_int if self.pk_is_numeric else str(codigo_int)
 
-    # ----------------- GERAR PRÓXIMO CÓDIGO -----------------
-
     def _find_sequence(self) -> Optional[str]:
-        # 1) pg_get_serial_sequence
         if not self.db.conectar():
-            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
+            return None
         try:
             assert self.db.cursor is not None
             self.db.cursor.execute(
                 "SELECT pg_get_serial_sequence(%s, %s)", (self.deposito_table, self.pk_col))
             r = self.db.cursor.fetchone()
-            if r and r[0]:
-                return str(r[0])
-        finally:
-            self.db.desconectar()
-
-        # 2) owned by
-        if not self.db.conectar():
-            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
-        try:
-            assert self.db.cursor is not None
-            self.db.cursor.execute(
-                """
-                SELECT quote_ident(ns_seq.nspname) || '.' || quote_ident(seq.relname) AS seq_qual
-                  FROM pg_class seq
-                  JOIN pg_namespace ns_seq ON ns_seq.oid = seq.relnamespace
-                  JOIN pg_depend dep ON dep.objid = seq.oid
-                  JOIN pg_class tbl ON tbl.oid = dep.refobjid
-                  JOIN pg_attribute att
-                    ON att.attrelid = tbl.oid
-                   AND att.attnum = dep.refobjsubid
-                 WHERE seq.relkind = 'S'
-                   AND tbl.oid = %s::regclass
-                   AND att.attname = %s
-                   AND dep.deptype IN ('a','n')
-                 LIMIT 1
-                """,
-                (self.deposito_table, self.pk_col),
-            )
-            r = self.db.cursor.fetchone()
             return str(r[0]) if r and r[0] else None
-        finally:
-            self.db.desconectar()
-
-    def _ensure_sequence(self) -> Optional[str]:
-        seq = self._find_sequence()
-        if seq:
-            return seq
-
-        # tenta criar (se tiver permissão); se falhar, retorna None e vamos de MAX+1
-        conn_ok = self.db.conectar()
-        if not conn_ok:
-            raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
-
-        try:
-            assert self.db.cursor is not None
-            self.db.cursor.execute(
-                """
-                SELECT ns.nspname, c.relname
-                  FROM pg_class c
-                  JOIN pg_namespace ns ON ns.oid = c.relnamespace
-                 WHERE c.oid = %s::regclass
-                """,
-                (self.deposito_table,),
-            )
-            r = self.db.cursor.fetchone()
-            if not r:
-                return None
-
-            schema, table = str(r[0]), str(r[1])
-            seq_name = f"{table}_{self.pk_col}_seq"
-
-            seq_qual = f"{_qident(schema)}.{_qident(seq_name)}"
-            table_qual = f"{_qident(schema)}.{_qident(table)}"
-            col_qual = _qident(self.pk_col)
-
-            self.db.cursor.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_qual}")
-
-            try:
-                self.db.cursor.execute(
-                    f"ALTER SEQUENCE {seq_qual} OWNED BY {table_qual}.{col_qual}")
-            except Exception:
-                self.db.rollback()
-
-            # default com cast se PK for TEXT
-            default_expr = "nextval(%s::regclass)" if self.pk_is_numeric else "nextval(%s::regclass)::text"
-            self.db.cursor.execute(
-                f"ALTER TABLE {table_qual} ALTER COLUMN {col_qual} SET DEFAULT {default_expr}",
-                (seq_qual,),
-            )
-
-            # setval com base no maior existente
-            if self.pk_is_numeric:
-                max_expr = f"COALESCE(MAX({col_qual})::bigint, 0)"
-            else:
-                max_expr = f"COALESCE(MAX((NULLIF(regexp_replace({col_qual}::text,'[^0-9]','','g'),'') )::bigint),0)"
-
-            self.db.cursor.execute(
-                f"""
-                SELECT setval(
-                    %s::regclass,
-                    GREATEST((SELECT {max_expr} FROM {table_qual}) + 1, 1),
-                    false
-                )
-                """,
-                (seq_qual,),
-            )
-
-            self.db.commit()
-            return seq_qual
-
-        except Exception as e:
-            self.db.rollback()
-            log_deposito(
-                f"SEQ: falhou criar/vincular -> {type(e).__name__}: {e}")
+        except Exception:
             return None
         finally:
             self.db.desconectar()
 
     def proximo_codigo(self) -> int:
-        # 1) tenta sequence
-        seq = self._ensure_sequence()
+        seq = self._find_sequence()
         if seq:
             if not self.db.conectar():
                 raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
@@ -599,30 +601,28 @@ class DepositoRepo:
             finally:
                 self.db.desconectar()
 
-        # 2) fallback MAX+1 (sem depender de permission)
         if not self.db.conectar():
             raise RuntimeError(f"Falha ao conectar: {self.db.ultimo_erro}")
         try:
             assert self.db.cursor is not None
             pk = _qident(self.pk_col)
             if self.pk_is_numeric:
-                sql = f"SELECT COALESCE(MAX({pk})::bigint, 0) + 1 FROM {self.deposito_table}"
-                self.db.cursor.execute(sql)
+                self.db.cursor.execute(
+                    f"SELECT COALESCE(MAX({pk})::bigint, 0) + 1 FROM {self.deposito_table}")
             else:
-                sql = f"""
+                self.db.cursor.execute(
+                    f"""
                     SELECT COALESCE(
                         MAX((NULLIF(regexp_replace({pk}::text,'[^0-9]','','g'),'') )::bigint),
                         0
                     ) + 1
                     FROM {self.deposito_table}
-                """
-                self.db.cursor.execute(sql)
+                    """
+                )
             r = self.db.cursor.fetchone()
             return int(r[0] or 1)
         finally:
             self.db.desconectar()
-
-    # ----------------- CRUD -----------------
 
     def listar(self, termo: Optional[str] = None, limit: int = 2000) -> List[Deposito]:
         termo = (termo or "").strip()
@@ -685,12 +685,8 @@ class DepositoRepo:
     def _encode_flag(self, col_name: str, is_bool: bool, value: bool) -> Any:
         if is_bool:
             return bool(value)
-
-        # se for coluna de "ativo/situacao", normalmente é 'A'/'I'
         if col_name.lower() in {"ativo", "situacao", "status"}:
             return "A" if value else "I"
-
-        # padrão para outras flags: 'S'/'N'
         return "S" if value else "N"
 
     def inserir(self, codigo_int: int, descricao: str, ativo: bool, padrao: bool, descons: bool) -> str:
@@ -806,7 +802,6 @@ class DepositoService:
                 codigo_int, descricao, ativo, padrao, descons)
             return ("inserido", codigo_salvo)
 
-        # se usuário digitou, tentamos tratar como int; se der, ok; senão, salva como texto
         try:
             codigo_int = int(codigo_txt)
             if self.repo.existe(codigo_txt):
@@ -817,7 +812,6 @@ class DepositoService:
                 codigo_int, descricao, ativo, padrao, descons)
             return ("inserido", codigo_salvo)
         except ValueError:
-            # código não numérico: só atualiza (se existir) ou tenta inserir como sequência numérica não faz sentido
             if self.repo.existe(codigo_txt):
                 self.repo.atualizar(codigo_txt, descricao,
                                     ativo, padrao, descons)
@@ -830,97 +824,135 @@ class DepositoService:
 
 
 # ============================================================
-# UI
+# UI / APP
 # ============================================================
 
 DEFAULT_GEOMETRY = "1100x650"
 APP_TITLE = "Tela de Depósito"
-
 TREE_COLS = ["codigo", "descricao", "ativo", "padrao", "descons"]
 
 
-class TelaDeposito(ttk.Frame):
-    def __init__(self, master: tk.Misc, service: DepositoService):
-        super().__init__(master)
+class TelaDepositoApp(tk.Tk):
+    def __init__(self, cfg: AppConfig, service: DepositoService, *, usuario_id: int, nivel: int, aviso: str, from_menu: bool) -> None:
+        super().__init__()
+        self.cfg = cfg
         self.service = service
 
-        self.var_filtro = tk.StringVar()
+        self.usuario_id = int(usuario_id)
+        self.nivel = int(nivel)
+        self.aviso = aviso or ""
+        self.from_menu = bool(from_menu)
 
-        self.var_codigo = tk.StringVar()
-        self.var_descricao = tk.StringVar()
-        self.var_ativo = tk.BooleanVar(value=True)
-        self.var_padrao = tk.BooleanVar(value=False)
-        self.var_descons = tk.BooleanVar(value=False)
+        self.usuario_nome = fetch_user_nome(
+            cfg, self.usuario_id) if self.usuario_id else ""
+
+        self.title(APP_TITLE)
+        self.geometry(DEFAULT_GEOMETRY)
+        apply_window_icon(self)
+
+        try:
+            style = ttk.Style()
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+        except Exception:
+            pass
 
         self._build_ui()
-        self.atualizar_lista()
+        self._apply_access_rules()
+        self._load()
+
+        if self.aviso:
+            self.after(200, lambda: messagebox.showwarning(
+                "Aviso", self.aviso, parent=self))
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _can_edit(self) -> bool:
+        return self.nivel >= 2  # 2 e 3 editam
 
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        root = ttk.Frame(self, padding=10)
+        root.pack(fill="both", expand=True)
 
-        top = ttk.Frame(self)
-        top.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        # Topbar (igual Arranjo/Usuários)
+        topbar = ttk.Frame(root)
+        topbar.pack(fill="x", pady=(0, 8))
+        topbar.columnconfigure(0, weight=1)
+
+        self.lbl_access = ttk.Label(
+            topbar, text="", foreground="gray", font=("Segoe UI", 9, "bold"))
+        self.lbl_access.pack(side="left", anchor="w")
+
+        self.btn_voltar = ttk.Button(
+            topbar, text="Voltar ao Menu", command=self._voltar_ou_fechar)
+        self.btn_voltar.pack(side="right")
+
+        # Busca e botões
+        top = ttk.Frame(root)
+        top.pack(fill="x", pady=(0, 8))
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="Buscar (ID/Descrição):").grid(row=0,
                                                            column=0, sticky="w")
-        ent_busca = ttk.Entry(top, textvariable=self.var_filtro)
-        ent_busca.grid(row=0, column=1, sticky="ew", padx=(6, 6))
-        ent_busca.bind("<Return>", lambda e: self.atualizar_lista())
+        self.var_filtro = tk.StringVar()
+        self.ent_busca = ttk.Entry(top, textvariable=self.var_filtro)
+        self.ent_busca.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self.ent_busca.bind("<Return>", lambda e: self._load())
 
-        ttk.Button(top, text="Atualizar", command=self.atualizar_lista).grid(
+        ttk.Button(top, text="Atualizar", command=self._load).grid(
             row=0, column=2, padx=(0, 6))
-        ttk.Button(top, text="Novo", command=self.novo).grid(
-            row=0, column=3, padx=(0, 6))
-        ttk.Button(top, text="Salvar", command=self.salvar).grid(
-            row=0, column=4, padx=(0, 6))
-        ttk.Button(top, text="Excluir", command=self.excluir).grid(
-            row=0, column=5, padx=(0, 6))
-        ttk.Button(top, text="Limpar", command=self.limpar_form).grid(
+        self.btn_novo = ttk.Button(top, text="Novo", command=self._novo)
+        self.btn_novo.grid(row=0, column=3, padx=(0, 6))
+        self.btn_salvar = ttk.Button(top, text="Salvar", command=self._salvar)
+        self.btn_salvar.grid(row=0, column=4, padx=(0, 6))
+        self.btn_excluir = ttk.Button(
+            top, text="Excluir", command=self._excluir)
+        self.btn_excluir.grid(row=0, column=5, padx=(0, 6))
+        ttk.Button(top, text="Limpar", command=self._limpar).grid(
             row=0, column=6)
 
-        form = ttk.LabelFrame(self, text="Depósito")
-        form.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
-        for c in range(10):
-            form.columnconfigure(c, weight=1)
+        # Form
+        form = ttk.LabelFrame(root, text="Depósito", padding=10)
+        form.pack(fill="x", pady=(0, 10))
+        form.columnconfigure(4, weight=1)
 
-        ttk.Label(form, text="Código:").grid(
-            row=0, column=0, sticky="w", padx=(10, 6), pady=6)
-        ent_codigo = ttk.Entry(form, textvariable=self.var_codigo, width=18)
-        ent_codigo.grid(row=0, column=1, sticky="w", padx=(0, 10), pady=6)
+        self.var_codigo = tk.StringVar()
+        self.var_desc = tk.StringVar()
+        self.var_ativo = tk.BooleanVar(value=True)
+        self.var_padrao = tk.BooleanVar(value=False)
+        self.var_descons = tk.BooleanVar(value=False)
 
-        ttk.Label(form, text="Descrição:").grid(
-            row=0, column=3, sticky="w", padx=(10, 6), pady=6)
-        ent_desc = ttk.Entry(form, textvariable=self.var_descricao)
-        ent_desc.grid(row=0, column=4, sticky="ew",
-                      padx=(0, 10), pady=6, columnspan=6)
+        ttk.Label(form, text="Código:").grid(row=0, column=0, sticky="w")
+        self.ent_codigo = ttk.Entry(
+            form, textvariable=self.var_codigo, width=18)
+        self.ent_codigo.grid(row=0, column=1, sticky="w", padx=(6, 14))
 
-        chk_ativo = ttk.Checkbutton(
+        ttk.Label(form, text="Descrição:").grid(row=0, column=2, sticky="w")
+        self.ent_desc = ttk.Entry(form, textvariable=self.var_desc)
+        self.ent_desc.grid(row=0, column=3, columnspan=2,
+                           sticky="ew", padx=(6, 0))
+
+        self.chk_ativo = ttk.Checkbutton(
             form, text="Ativo (situação)", variable=self.var_ativo)
-        chk_padrao = ttk.Checkbutton(
+        self.chk_padrao = ttk.Checkbutton(
             form, text="Padrão", variable=self.var_padrao)
-        chk_des = ttk.Checkbutton(
+        self.chk_des = ttk.Checkbutton(
             form, text="Desconsiderar saldo", variable=self.var_descons)
+        self.chk_ativo.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.chk_padrao.grid(row=1, column=2, sticky="w", pady=(8, 0))
+        self.chk_des.grid(row=1, column=3, sticky="w", pady=(8, 0))
 
-        chk_ativo.grid(row=1, column=0, sticky="w", padx=(
-            10, 10), pady=(0, 6), columnspan=2)
-        chk_padrao.grid(row=1, column=2, sticky="w",
-                        padx=(10, 10), pady=(0, 6))
-        chk_des.grid(row=1, column=3, sticky="w", padx=(
-            10, 10), pady=(0, 6), columnspan=3)
+        self.ent_desc.bind("<Return>", lambda e: self._salvar())
 
-        ent_desc.bind("<Return>", lambda e: self.salvar())
-
-        lst = ttk.Frame(self)
-        lst.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        # Lista
+        lst = ttk.Frame(root)
+        lst.pack(fill="both", expand=True)
         lst.rowconfigure(0, weight=1)
         lst.columnconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(
             lst, columns=TREE_COLS, show="headings", selectmode="browse")
         self.tree.grid(row=0, column=0, sticky="nsew")
-
         vsb = ttk.Scrollbar(lst, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(lst, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -939,9 +971,42 @@ class TelaDeposito(ttk.Frame):
         self.tree.column("padrao", width=90, anchor="center", stretch=False)
         self.tree.column("descons", width=140, anchor="center", stretch=False)
 
-        self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
-    def atualizar_lista(self) -> None:
+    def _apply_access_rules(self) -> None:
+        nome = self.usuario_nome or (
+            f"ID {self.usuario_id}" if self.usuario_id else "Não informado")
+        nivel_txt = NIVEL_LABEL.get(self.nivel, str(self.nivel))
+
+        can_edit = self._can_edit()
+        self.lbl_access.config(
+            text=f"Logado: {nome} | Nível: {nivel_txt}",
+            foreground=("green" if can_edit else "gray"),
+        )
+
+        # Botão voltar (se veio do menu, só fecha)
+        self.btn_voltar.config(
+            text=("Fechar" if self.from_menu else "Voltar ao Menu"))
+
+        # Campos e checks
+        self.ent_codigo.configure(state=("normal" if can_edit else "readonly"))
+        self.ent_desc.configure(state=("normal" if can_edit else "readonly"))
+        for chk in (self.chk_ativo, self.chk_padrao, self.chk_des):
+            chk.state(["!disabled"] if can_edit else ["disabled"])
+
+        # Botões
+        for btn in (self.btn_novo, self.btn_salvar, self.btn_excluir):
+            btn.state(["!disabled"] if can_edit else ["disabled"])
+
+    def _limpar(self) -> None:
+        self.var_codigo.set("")
+        self.var_desc.set("")
+        self.var_ativo.set(True)
+        self.var_padrao.set(False)
+        self.var_descons.set(False)
+        self.tree.selection_remove(self.tree.selection())
+
+    def _load(self) -> None:
         termo = self.var_filtro.get().strip() or None
         for it in self.tree.get_children():
             self.tree.delete(it)
@@ -949,7 +1014,8 @@ class TelaDeposito(ttk.Frame):
         try:
             rows = self.service.listar(termo)
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao listar depósito:\n{e}")
+            messagebox.showerror(
+                "Erro", f"Falha ao listar depósito:\n{e}", parent=self)
             return
 
         def simnao(b: bool) -> str:
@@ -964,95 +1030,100 @@ class TelaDeposito(ttk.Frame):
                 simnao(d.desconsidera_saldo),
             ))
 
-    def on_select(self, _event=None) -> None:
+    def _on_select(self, _event=None) -> None:
         sel = self.tree.selection()
         if not sel:
             return
         codigo, descricao, ativo, padrao, descons = self.tree.item(
             sel[0], "values")
         self.var_codigo.set(str(codigo or ""))
-        self.var_descricao.set(str(descricao or ""))
+        self.var_desc.set(str(descricao or ""))
         self.var_ativo.set(str(ativo).strip().lower() == "sim")
         self.var_padrao.set(str(padrao).strip().lower() == "sim")
         self.var_descons.set(str(descons).strip().lower() == "sim")
 
-    def limpar_form(self) -> None:
-        self.var_codigo.set("")
-        self.var_descricao.set("")
-        self.var_ativo.set(True)
-        self.var_padrao.set(False)
-        self.var_descons.set(False)
-        self.tree.selection_remove(self.tree.selection())
-
-    def novo(self) -> None:
-        # ✅ AQUI está a correção pedida: gera código automaticamente
-        self.limpar_form()
+    def _novo(self) -> None:
+        if not self._can_edit():
+            messagebox.showwarning(
+                "Acesso", "Seu nível é somente leitura.", parent=self)
+            return
+        self._limpar()
         try:
             prox = self.service.proximo_codigo()
             self.var_codigo.set(str(prox))
-            # mantém descrição em branco para digitar
         except Exception as e:
             messagebox.showerror(
-                "Erro",
-                "Falha ao gerar próximo Código.\n"
-                "Obs: o sistema tenta usar sequence/nextval; se não houver permissão, usa MAX+1.\n\n"
-                f"Detalhe:\n{e}"
-            )
+                "Erro", f"Falha ao gerar próximo código:\n{e}", parent=self)
 
-    def salvar(self) -> None:
+    def _salvar(self) -> None:
+        if not self._can_edit():
+            messagebox.showwarning(
+                "Acesso", "Seu nível é somente leitura.", parent=self)
+            return
         try:
             status, codigo = self.service.salvar(
                 self.var_codigo.get(),
-                self.var_descricao.get(),
+                self.var_desc.get(),
                 bool(self.var_ativo.get()),
                 bool(self.var_padrao.get()),
                 bool(self.var_descons.get()),
             )
         except Exception as e:
-            messagebox.showerror("Validação/Erro", str(e))
+            messagebox.showerror("Validação/Erro", str(e), parent=self)
             return
 
         self.var_codigo.set(str(codigo))
         messagebox.showinfo(
-            "OK", f"Depósito {status} com sucesso.\nCódigo: {codigo}")
-        self.atualizar_lista()
+            "OK", f"Depósito {status} com sucesso.\nCódigo: {codigo}", parent=self)
+        self._load()
 
-    def excluir(self) -> None:
+    def _excluir(self) -> None:
+        if not self._can_edit():
+            messagebox.showwarning(
+                "Acesso", "Seu nível é somente leitura.", parent=self)
+            return
+
         codigo = (self.var_codigo.get() or "").strip()
         if not codigo:
             messagebox.showwarning(
-                "Atenção", "Selecione um registro para excluir.")
+                "Atenção", "Selecione um registro para excluir.", parent=self)
             return
 
-        if not messagebox.askyesno("Confirmar", f"Excluir Depósito {codigo}?"):
+        if not messagebox.askyesno("Confirmar", f"Excluir Depósito {codigo}?", parent=self):
             return
 
         try:
             self.service.excluir(codigo)
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao excluir:\n{e}")
+            messagebox.showerror(
+                "Erro", f"Falha ao excluir:\n{e}", parent=self)
             return
 
-        messagebox.showinfo("OK", "Registro excluído.")
-        self.limpar_form()
-        self.atualizar_lista()
+        messagebox.showinfo("OK", "Registro excluído.", parent=self)
+        self._limpar()
+        self._load()
 
+    def _voltar_ou_fechar(self) -> None:
+        # Se veio do menu, só fecha (não cria menu novo)
+        if self.from_menu:
+            self.destroy()
+            return
+
+        # Standalone: abre o menu e fecha
+        try:
+            abrir_menu_principal_skip_entrada()
+        finally:
+            self.destroy()
 
 # ============================================================
 # STARTUP
 # ============================================================
 
+
 def test_connection_or_die(cfg: AppConfig) -> None:
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=cfg.db_host,
-            database=cfg.db_database,
-            user=cfg.db_user,
-            password=cfg.db_password,
-            port=int(cfg.db_port),
-            connect_timeout=5,
-        )
+        conn = db_connect(cfg)
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.fetchone()
@@ -1067,20 +1138,40 @@ def test_connection_or_die(cfg: AppConfig) -> None:
         raise RuntimeError(f"{type(e).__name__}: {e}")
 
 
+def _detect_from_menu_flag() -> bool:
+    # Força standalone (se você quiser testar manualmente)
+    if "--standalone" in sys.argv:
+        return False
+
+    # Se o menu chamou, normalmente passa usuario-id
+    if "--usuario-id" in sys.argv or "--uid" in sys.argv:
+        return True
+
+    # Flags explícitas
+    if "--from-menu" in sys.argv:
+        return True
+
+    # Alguns menus reaproveitam isso
+    if "--skip-entrada" in sys.argv:
+        return True
+
+    # Variável de ambiente (se você usar no subprocess)
+    env = (os.getenv("EKENOX_FROM_MENU") or "").strip().lower()
+    return env in {"1", "true", "yes", "sim", "s"}
+
+
+def _parse_usuario_id() -> Optional[int]:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--usuario-id", "--uid", dest="usuario_id", type=int)
+    args, _ = parser.parse_known_args(sys.argv[1:])
+    return int(args.usuario_id) if args.usuario_id else None
+
+
 def main() -> None:
     cfg = env_override(load_config())
 
-    root = tk.Tk()
-    root.title(APP_TITLE)
-    root.geometry(DEFAULT_GEOMETRY)
-    apply_window_icon(root)
-
-    try:
-        style = ttk.Style()
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-    except Exception:
-        pass
+    from_menu = _detect_from_menu_flag()
+    usuario_id = _parse_usuario_id()
 
     try:
         test_connection_or_die(cfg)
@@ -1094,42 +1185,31 @@ def main() -> None:
             f"Usuário: {cfg.db_user}\n\n"
             f"Erro:\n{e}"
         )
-        root.destroy()
         return
 
     deposito_table = detectar_tabela(cfg, DEPOSITO_TABLES, '"deposito"')
-
     db = Database(cfg)
     repo = DepositoRepo(db, deposito_table=deposito_table)
     service = DepositoService(repo)
 
-    tela = TelaDeposito(root, service)
-    tela.pack(fill="both", expand=True)
+    # Permissões (se não veio usuário, entra leitura)
+    if usuario_id is None:
+        nivel = 1
+        aviso = (
+            "Atenção: usuário não informado ao abrir a tela.\n\n"
+            "Abrindo em NÍVEL 1 (Leitura).\n"
+            "Para respeitar permissões reais, chame com --usuario-id <id>."
+        )
+        uid = 0
+    else:
+        uid = int(usuario_id)
+        nivel, aviso = get_access_level_for_this_screen(cfg, uid)
+        if nivel <= 0:
+            _deny_and_exit(aviso)
 
-    closing = {"done": False}
-
-    def open_menu_then_close():
-        if closing["done"]:
-            return
-        closing["done"] = True
-        try:
-            abrir_menu_principal_skip_entrada()
-        finally:
-            try:
-                root.destroy()
-            except Exception:
-                pass
-
-    def on_close():
-        try:
-            root.withdraw()
-            root.update_idletasks()
-        except Exception:
-            pass
-        root.after(50, open_menu_then_close)
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
-    root.mainloop()
+    app = TelaDepositoApp(cfg, service, usuario_id=uid,
+                          nivel=nivel, aviso=aviso, from_menu=from_menu)
+    app.mainloop()
 
 
 if __name__ == "__main__":

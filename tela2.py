@@ -4,12 +4,24 @@ from __future__ import annotations
 menu_principal.py
 Python 3.12+ | Tkinter | Postgres 16+ | psycopg2
 
-CORREÇÕES INCLUÍDAS:
-- Tela de entrada: avatar + sem área cinza (canvas com bg correto)
-- Menu NÃO é destruído ao abrir outro programa: ele oculta e volta quando o filho fecha
-- Resolve automaticamente .py/.exe e procura em APP_DIR/BASE_DIR
-- Passa --usuario-id para todos os programas abertos pelo menu
-- Controle de acesso por nível (se nível = 0, bloqueia; se programa não existir em 'programas', abre e avisa no log)
+OBJETIVO:
+- Mostrar a tela "Ekenox - Entrada" (login: e-mail + senha) SOMENTE na primeira abertura normal.
+- Ao reabrir o menu voltando de outro programa (ex: tela_produtos.py), NÃO mostrar a entrada.
+
+MECANISMOS:
+1) CLI:
+   python menu_principal.py --skip-entrada
+   -> abre direto no menu (sem entrada)
+
+2) Flag de sessão (arquivo):
+   Ao logar com sucesso, cria BASE_DIR\\.session_skip_entrada
+   Enquanto esse arquivo existir, não mostra Entrada.
+
+Quando o usuário "Sair" (confirmando), a flag é removida.
+
+NOTA (Windows):
+- Não usar withdraw() no root para controlar Toplevel (pode "sumir" janela).
+- Root começa com alpha=0.0 (invisível, mas existente); depois volta alpha=1.0 ao mostrar menu.
 """
 
 import hashlib
@@ -37,6 +49,7 @@ def get_app_dir() -> str:
 
 
 APP_DIR = get_app_dir()
+
 BASE_DIR = r"C:\Users\User\Desktop\Pyton\OrdemProducao"
 os.makedirs(BASE_DIR, exist_ok=True)
 
@@ -91,7 +104,7 @@ def has_session_skip_entrada() -> bool:
 
 
 # ============================================================
-# ÍCONE (favicon)
+# ÍCONE / FAVICON
 # ============================================================
 
 def find_icon_path() -> Optional[str]:
@@ -109,22 +122,18 @@ def find_icon_path() -> Optional[str]:
 
 def apply_window_icon(win: tk.Misc) -> None:
     """
-    Aplica ícone .ico no Windows; se falhar, tenta .png.
-    Mantém referência do PhotoImage para não ser coletado.
+    Tenta aplicar .ico (Windows) e, se falhar, tenta .png.
+    Mantém referência do PhotoImage no objeto para não ser coletado.
     """
     try:
         ico = find_icon_path()
         if ico:
             try:
+                # no Windows, isso é o que costuma funcionar melhor
                 win.iconbitmap(ico)
                 return
             except Exception as e:
                 log(f"iconbitmap failed: {ico} | {type(e).__name__}: {e}")
-            try:
-                win.iconbitmap(default=ico)
-                return
-            except Exception as e:
-                log(f"iconbitmap(default=) failed: {ico} | {type(e).__name__}: {e}")
 
         png_candidates = [
             os.path.join(BASE_DIR, "imagens", "favicon.png"),
@@ -160,37 +169,7 @@ def load_png_icon(rel_path: str, max_side: int = 48) -> Optional[tk.PhotoImage]:
             fator = max(1, int(maior / max_side))
             img = img.subsample(fator, fator)
         return img
-    except Exception as e:
-        log(f"load_png_icon failed: {path} | {type(e).__name__}: {e}")
-        return None
-
-
-def load_avatar_image(max_side: int = 220) -> Optional[tk.PhotoImage]:
-    candidates = [
-        # BASE_DIR
-        os.path.join(BASE_DIR, "imagens", "avatar_ekenox.png"),
-        os.path.join(BASE_DIR, "avatar_ekenox.png"),
-        os.path.join(BASE_DIR, "imagens", "Ekenox.png"),
-        os.path.join(BASE_DIR, "Ekenox.png"),
-        # APP_DIR
-        os.path.join(APP_DIR, "imagens", "avatar_ekenox.png"),
-        os.path.join(APP_DIR, "avatar_ekenox.png"),
-        os.path.join(APP_DIR, "imagens", "Ekenox.png"),
-        os.path.join(APP_DIR, "Ekenox.png"),
-    ]
-    path = next((p for p in candidates if os.path.isfile(p)), None)
-    if not path:
-        return None
-    try:
-        img = tk.PhotoImage(file=path)
-        w, h = img.width(), img.height()
-        maior = max(w, h)
-        if maior > max_side:
-            fator = max(1, int(maior / max_side))
-            img = img.subsample(fator, fator)
-        return img
-    except Exception as e:
-        log(f"load_avatar_image failed: {path} | {type(e).__name__}: {e}")
+    except Exception:
         return None
 
 
@@ -219,8 +198,7 @@ def load_config() -> AppConfig:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
         return AppConfig(**data)
-    except Exception as e:
-        log(f"load_config error: {type(e).__name__}: {e}")
+    except Exception:
         return AppConfig()
 
 
@@ -305,94 +283,53 @@ def fetch_user_by_email(cfg: AppConfig, email: str) -> Optional[dict]:
 
 
 # ============================================================
-# PERMISSÃO (nível por programa)
+# PERMISSÃO (NÍVEL POR PROGRAMA) — exige NÍVEL 3
 # ============================================================
 
-def fetch_user_nivel_por_programa(cfg: AppConfig, usuario_id: int, termo_programa: str) -> Tuple[int, bool]:
+def fetch_user_max_nivel_for_program_keys(
+    cfg: AppConfig,
+    usuario_id: int,
+    program_keys: List[str],
+) -> int:
     """
-    Retorna (nivel, programa_encontrado_no_cadastro).
-    - Se programa não existir em Ekenox.programas, retorna (1, False) e deixa abrir (mas loga).
-    - Se programa existir e não houver permissão: (0, True) -> bloqueia.
+    Retorna o MAIOR nível encontrado para o usuário em qualquer programa que
+    combine com uma das chaves (por codigo/nome).
+    Se não encontrar, retorna 0.
     """
-    termo = (termo_programa or "").strip()
-    if not termo:
-        return 1, False  # deixa abrir (não tem termo)
+    keys = [k.strip() for k in (program_keys or []) if (k or "").strip()]
+    if not keys:
+        return 0
 
-    # 1) verifica se existe programa no cadastro
-    sql_pid = """
-        SELECT pr."programaId"
-          FROM "Ekenox"."programas" pr
-         WHERE COALESCE(pr."nome",'')   ILIKE %s
-            OR COALESCE(pr."codigo",'') ILIKE %s
-         ORDER BY pr."programaId" DESC
-         LIMIT 1
+    # Monta filtros OR: lower(codigo)=lower(%s) OR lower(nome)=lower(%s) OR nome ILIKE %s ...
+    clauses: List[str] = []
+    params: List[Any] = [int(usuario_id)]
+
+    for k in keys:
+        clauses.append('LOWER(COALESCE(p."codigo", \'\')) = LOWER(%s)')
+        params.append(k)
+        clauses.append('LOWER(COALESCE(p."nome", \'\')) = LOWER(%s)')
+        params.append(k)
+        clauses.append('COALESCE(p."nome", \'\') ILIKE %s')
+        params.append(f"%{k}%")
+
+    where_program = " OR ".join(f"({c})" for c in clauses)
+
+    sql = f"""
+        SELECT COALESCE(MAX(COALESCE(up."nivel",0)), 0) AS nivel
+          FROM "Ekenox"."usuario_programa" up
+          JOIN "Ekenox"."programas" p ON p."programaId" = up."programaId"
+         WHERE up."usuarioId" = %s
+           AND ({where_program})
     """
-    like = f"%{termo}%"
+
     conn = db_connect(cfg)
     try:
-        with conn.cursor() as cur:
-            cur.execute(sql_pid, (like, like))
-            r = cur.fetchone()
-            if not r:
-                return 1, False  # programa não cadastrado -> deixa abrir
-            pid = int(r[0])
-
-        # 2) busca nível
-        sql_nivel = """
-            SELECT COALESCE(up."nivel", 0)
-              FROM "Ekenox"."usuario_programa" up
-             WHERE up."usuarioId" = %s
-               AND up."programaId" = %s
-             LIMIT 1
-        """
-        with conn.cursor() as cur:
-            cur.execute(sql_nivel, (int(usuario_id), int(pid)))
-            rn = cur.fetchone()
-            nivel = int(rn[0] or 0) if rn else 0
-            if nivel not in (0, 1, 2, 3):
-                nivel = 1
-            return nivel, True
-    except Exception as e:
-        log(f"fetch_user_nivel_por_programa error: {type(e).__name__}: {e}")
-        return 1, False
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        row = cur.fetchone()
+        return int(row[0] or 0) if row else 0
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-# ============================================================
-# RESOLVER ARQUIVO (.py/.exe) E PROCURAR EM APP_DIR/BASE_DIR
-# ============================================================
-
-def resolve_program_file(path_hint: str) -> Optional[str]:
-    candidates: List[str] = []
-    if path_hint:
-        candidates.append(path_hint)
-
-        base, ext = os.path.splitext(path_hint)
-        if ext.lower() == ".py":
-            candidates.append(base + ".exe")
-        elif ext.lower() == ".exe":
-            candidates.append(base + ".py")
-
-        name = os.path.basename(path_hint)
-        candidates.append(os.path.join(APP_DIR, name))
-        candidates.append(os.path.join(BASE_DIR, name))
-
-        base_name, ext2 = os.path.splitext(name)
-        if ext2.lower() == ".py":
-            candidates.append(os.path.join(APP_DIR, base_name + ".exe"))
-            candidates.append(os.path.join(BASE_DIR, base_name + ".exe"))
-        elif ext2.lower() == ".exe":
-            candidates.append(os.path.join(APP_DIR, base_name + ".py"))
-            candidates.append(os.path.join(BASE_DIR, base_name + ".py"))
-
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return c
-    return None
+        conn.close()
 
 
 # ============================================================
@@ -429,90 +366,6 @@ def build_run_cmd(script_path: str, extra_args: Optional[List[str]] = None) -> L
         return pick_python_gui_cmd() + [script_path] + extra_args
 
     return [sys.executable, script_path] + extra_args
-
-
-# ============================================================
-# PROGRAMAS (Cadastro / Movimento)
-#  - termo_permissao: termo para buscar em Ekenox.programas (nome/codigo)
-# ============================================================
-
-PROGRAMAS: List[Dict[str, Any]] = [
-    # ---- CADASTRO ----
-    {"menu": "Cadastro", "nome": "Produtos", "icone": "imagens/menu_produtos.png",
-     "arquivo": os.path.join(APP_DIR, "tela_produtos.py"), "tipo": "py", "termo_permissao": "Produtos"},
-    {"menu": "Cadastro", "nome": "Informação Produto", "icone": "imagens/menu_infoproduto.png",
-     "arquivo": os.path.join(APP_DIR, "tela_info_produto.py"), "tipo": "py", "termo_permissao": "Informação Produto"},
-    {"menu": "Cadastro", "nome": "Arranjo", "icone": "imagens/menu_arranjo.png",
-     "arquivo": os.path.join(APP_DIR, "tela_arranjo.py"), "tipo": "py", "termo_permissao": "Arranjo"},
-    {"menu": "Cadastro", "nome": "Categoria", "icone": "imagens/menu_categoria.png",
-     "arquivo": os.path.join(APP_DIR, "tela_categoria.py"), "tipo": "py", "termo_permissao": "Categoria"},
-    {"menu": "Cadastro", "nome": "Depósito", "icone": "imagens/menu_deposito.png",
-     "arquivo": os.path.join(APP_DIR, "tela_deposito.py"), "tipo": "py", "termo_permissao": "Depósito"},
-    {"menu": "Cadastro", "nome": "Estoque", "icone": "imagens/menu_estoque.png",
-     "arquivo": os.path.join(APP_DIR, "tela_estoque.py"), "tipo": "py", "termo_permissao": "Estoque"},
-    {"menu": "Cadastro", "nome": "Estrutura", "icone": "imagens/menu_estrutura.png",
-     "arquivo": os.path.join(APP_DIR, "tela_estrutura.py"), "tipo": "py", "termo_permissao": "Estrutura"},
-    {"menu": "Cadastro", "nome": "Fornecedor", "icone": "imagens/menu_fornecedor.png",
-     "arquivo": os.path.join(APP_DIR, "tela_fornecedor.py"), "tipo": "py", "termo_permissao": "Fornecedor"},
-    {"menu": "Cadastro", "nome": "Situação", "icone": "imagens/menu_situacao.png",
-     "arquivo": os.path.join(APP_DIR, "tela_situacao.py"), "tipo": "py", "termo_permissao": "Situação"},
-
-    # ---- MOVIMENTO ----
-    {"menu": "Movimento", "nome": "Ordem de Produção", "icone": "imagens/menu_op.png",
-     "arquivo": os.path.join(APP_DIR, "Ordem_Producao.py"), "tipo": "py", "termo_permissao": "Ordem de Produção"},
-]
-
-
-# ============================================================
-# LOGIN SCROLLÁVEL (corrigido bg)
-# ============================================================
-
-class ScrollableFrame(ttk.Frame):
-    def __init__(self, master: tk.Misc, *, bg: str = "#121212"):
-        super().__init__(master)
-        self.bg = bg
-
-        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, bg=self.bg)
-        self.vsb = ttk.Scrollbar(
-            self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
-
-        self.inner = tk.Frame(self.canvas, bg=self.bg)
-        self.inner_id = self.canvas.create_window(
-            (0, 0), window=self.inner, anchor="nw")
-
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.vsb.pack(side="right", fill="y")
-
-        self.inner.bind("<Configure>", self._on_configure_inner)
-        self.canvas.bind("<Configure>", self._on_configure_canvas)
-
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
-        self.canvas.bind_all("<Button-4>", self._on_mousewheel, add="+")
-        self.canvas.bind_all(
-            "<Button-5>", self._on_mousewheel, add="+")  # Linux
-
-    def _on_configure_inner(self, _evt=None):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _on_configure_canvas(self, _evt=None):
-        try:
-            self.canvas.itemconfigure(
-                self.inner_id, width=self.canvas.winfo_width())
-        except Exception:
-            pass
-
-    def _on_mousewheel(self, event):
-        try:
-            if getattr(event, "num", None) == 4:
-                self.canvas.yview_scroll(-3, "units")
-            elif getattr(event, "num", None) == 5:
-                self.canvas.yview_scroll(3, "units")
-            else:
-                delta = int(-1 * (event.delta / 120))
-                self.canvas.yview_scroll(delta * 3, "units")
-        except Exception:
-            pass
 
 
 # ============================================================
@@ -565,58 +418,34 @@ class Splash(tk.Toplevel):
 
 
 # ============================================================
-# SISTEMA: ABRIR PROGRAMAS (agora voltando ao menu)
+# PROGRAMAS (DIVIDIDO EM: Cadastro / Movimento)
 # ============================================================
 
-def open_reset_senha(app: "MenuPrincipalApp") -> None:
-    candidates = [
-        os.path.join(APP_DIR, "reset_senha.py"),
-        os.path.join(APP_DIR, "reset_senha.exe"),
-        os.path.join(BASE_DIR, "reset_senha.py"),
-        os.path.join(BASE_DIR, "reset_senha.exe"),
-    ]
-    arquivo = next((p for p in candidates if os.path.isfile(p)), None)
-    if not arquivo:
-        messagebox.showerror(
-            "Reset de Senha",
-            "Não encontrei reset_senha.py / reset_senha.exe.\n\n"
-            "Coloque o arquivo em APP_DIR ou BASE_DIR."
-        )
-        return
+PROGRAMAS: List[Dict[str, Any]] = [
+    # ---- CADASTRO ----
+    {"menu": "Cadastro", "nome": "Produtos", "icone": "imagens/menu_produtos.png",
+     "arquivo": os.path.join(APP_DIR, "tela_produtos.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Informação Produto", "icone": "imagens/menu_infoproduto.png",
+     "arquivo": os.path.join(APP_DIR, "tela_info_produto.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Arranjo", "icone": "imagens/menu_arranjo.png",
+     "arquivo": os.path.join(APP_DIR, "tela_arranjo.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Categoria", "icone": "imagens/menu_categoria.png",
+     "arquivo": os.path.join(APP_DIR, "tela_categoria.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Depósito", "icone": "imagens/menu_deposito.png",
+     "arquivo": os.path.join(APP_DIR, "tela_deposito.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Estoque", "icone": "imagens/menu_estoque.png",
+     "arquivo": os.path.join(APP_DIR, "tela_estoque.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Estrutura", "icone": "imagens/menu_estrutura.png",
+     "arquivo": os.path.join(APP_DIR, "tela_estrutura.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Fornecedor", "icone": "imagens/menu_fornecedor.png",
+     "arquivo": os.path.join(APP_DIR, "tela_fornecedor.py"), "tipo": "py"},
+    {"menu": "Cadastro", "nome": "Situação", "icone": "imagens/menu_situacao.png",
+     "arquivo": os.path.join(APP_DIR, "tela_situacao.py"), "tipo": "py"},
 
-    extra_args: List[str] = []
-    if app.user and app.user.get("usuarioId"):
-        extra_args = ["--usuario-id", str(app.user["usuarioId"])]
-
-    app.run_child_program("Reset de Senha", arquivo,
-                          extra_args, termo_permissao="Reset de Senha")
-
-
-def open_tela_usuarios(app: "MenuPrincipalApp") -> None:
-    if not app.user or not app.user.get("usuarioId"):
-        messagebox.showerror("Permissão", "Faça login novamente.")
-        return
-
-    uid = int(app.user["usuarioId"])
-
-    candidates = [
-        os.path.join(APP_DIR, "tela_usuarios.py"),
-        os.path.join(APP_DIR, "tela_usuarios.exe"),
-        os.path.join(BASE_DIR, "tela_usuarios.py"),
-        os.path.join(BASE_DIR, "tela_usuarios.exe"),
-    ]
-    arquivo = next((p for p in candidates if os.path.isfile(p)), None)
-    if not arquivo:
-        messagebox.showerror(
-            "Usuários",
-            "Não encontrei tela_usuarios.py / tela_usuarios.exe.\n\n"
-            "Coloque o arquivo em APP_DIR ou BASE_DIR."
-        )
-        return
-
-    extra_args = ["--usuario-id", str(uid)]
-    app.run_child_program("Usuários", arquivo, extra_args,
-                          termo_permissao="Usuários")
+    # ---- MOVIMENTO ----
+    {"menu": "Movimento", "nome": "Ordem de Produção", "icone": "imagens/menu_op.png",
+     "arquivo": os.path.join(APP_DIR, "Ordem_Producao.py"), "tipo": "py"},
+]
 
 
 # ============================================================
@@ -645,13 +474,139 @@ class MenuPrincipalApp(tk.Tk):
 
         self.user: Optional[dict] = None
 
-        # controle do processo filho
-        self._child_proc: Optional[subprocess.Popen] = None
-        self._child_nome: str = ""
-
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # ✅ não esconder Toplevel no Windows
+        try:
+            self.deiconify()
+            self.attributes("-alpha", 0.0)
+        except Exception:
+            self.withdraw()
+
         self.after(80, self._startup)
+
+    # ---------------- permissões ----------------
+
+    def _require_nivel3(self, program_keys: List[str]) -> bool:
+        if not self.user or not self.user.get("usuarioId"):
+            messagebox.showerror("Permissão", "Faça login novamente.")
+            return False
+
+        try:
+            uid = int(self.user["usuarioId"])
+        except Exception:
+            messagebox.showerror(
+                "Permissão", "Usuário inválido. Faça login novamente.")
+            return False
+
+        try:
+            nivel = fetch_user_max_nivel_for_program_keys(
+                self.cfg, uid, program_keys)
+        except Exception as e:
+            log(f"Falha ao validar permissão: {type(e).__name__}: {e}")
+            messagebox.showerror(
+                "Permissão", f"Falha ao validar permissão:\n{e}")
+            return False
+
+        if nivel < 3:
+            messagebox.showerror(
+                "Permissão",
+                "Acesso negado.\n\nSomente usuários com NÍVEL 3 (Admin) podem abrir este programa."
+            )
+            return False
+
+        return True
+
+    # ---------------- abrir programas do sistema ----------------
+
+    def _open_reset_senha(self) -> None:
+        """Abre o programa reset_senha.py (ou exe) — protegido por NÍVEL 3."""
+        # (opcional) protege reset senha também
+        if not self._require_nivel3(["RESET_SENHA", "Reset", "Senha", "Admin"]):
+            return
+
+        candidates = [
+            os.path.join(APP_DIR, "reset_senha.py"),
+            os.path.join(APP_DIR, "reset_senha.exe"),
+            os.path.join(BASE_DIR, "reset_senha.py"),
+            os.path.join(BASE_DIR, "reset_senha.exe"),
+        ]
+        arquivo = next((p for p in candidates if os.path.isfile(p)), None)
+
+        if not arquivo:
+            messagebox.showerror(
+                "Reset de Senha",
+                "Não encontrei o arquivo reset_senha.py / reset_senha.exe.\n\n"
+                "Coloque o arquivo na mesma pasta do menu_principal.py (APP_DIR) ou em BASE_DIR."
+            )
+            return
+
+        try:
+            cwd = os.path.dirname(arquivo) or APP_DIR
+            if arquivo.lower().endswith(".exe"):
+                subprocess.Popen([arquivo], cwd=cwd)
+            else:
+                cmd = build_run_cmd(arquivo)
+                subprocess.Popen(cmd, cwd=cwd)
+
+            self.after(150, self.destroy)
+
+        except Exception as e:
+            log(f"Falha ao abrir reset_senha: {type(e).__name__}: {e}")
+            messagebox.showerror("Reset de Senha", f"Falha ao abrir:\n{e}")
+
+    def _open_usuarios_acesso(self) -> None:
+        """Abre tela_usuarios_acesso.py/.exe — protegido por NÍVEL 3."""
+        # Ajuste aqui caso o programa no banco tenha outro codigo/nome
+        PROGRAM_KEYS_USUARIOS_ACESSO = [
+            "USUARIOS_ACESSO",
+            "USUARIOS",
+            "ACESSO",
+            "Usuários e Acessos",
+            "Usuarios e Acessos",
+        ]
+
+        if not self._require_nivel3(PROGRAM_KEYS_USUARIOS_ACESSO):
+            return
+
+        candidates = [
+            os.path.join(APP_DIR, "tela_usuarios_acesso.py"),
+            os.path.join(APP_DIR, "tela_usuarios_acesso.exe"),
+            os.path.join(BASE_DIR, "tela_usuarios_acesso.py"),
+            os.path.join(BASE_DIR, "tela_usuarios_acesso.exe"),
+        ]
+        arquivo = next((p for p in candidates if os.path.isfile(p)), None)
+
+        if not arquivo:
+            messagebox.showerror(
+                "Usuários e Acessos",
+                "Não encontrei o arquivo tela_usuarios_acesso.py / tela_usuarios_acesso.exe.\n\n"
+                "Coloque o arquivo na mesma pasta do menu_principal.py (APP_DIR) ou em BASE_DIR."
+            )
+            return
+
+        # Se quiser passar o usuário logado para a tela (opcional):
+        extra_args: List[str] = []
+        try:
+            if self.user and self.user.get("usuarioId"):
+                extra_args = ["--usuario-id", str(int(self.user["usuarioId"]))]
+        except Exception:
+            extra_args = []
+
+        try:
+            cwd = os.path.dirname(arquivo) or APP_DIR
+            if arquivo.lower().endswith(".exe"):
+                subprocess.Popen([arquivo] + extra_args, cwd=cwd)
+            else:
+                cmd = build_run_cmd(arquivo, extra_args=extra_args)
+                subprocess.Popen(cmd, cwd=cwd)
+
+            self.after(150, self.destroy)
+
+        except Exception as e:
+            log(
+                f"Falha ao abrir tela_usuarios_acesso: {type(e).__name__}: {e}")
+            messagebox.showerror("Usuários e Acessos", f"Falha ao abrir:\n{e}")
 
     # ---------------- STARTUP ----------------
 
@@ -691,14 +646,19 @@ class MenuPrincipalApp(tk.Tk):
             return
         self._ui_built = True
         self._build_ui()
-        self._log_programas_faltando()
 
     def _show_menu(self) -> None:
         if self._closing:
             return
+
         try:
-            self.deiconify()
-            self.lift()
+            self.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
+        self.deiconify()
+        self.lift()
+        try:
             self.focus_force()
         except Exception:
             pass
@@ -733,10 +693,11 @@ class MenuPrincipalApp(tk.Tk):
         tela = tk.Toplevel(self)
         apply_window_icon(tela)
         tela.title("Ekenox - Entrada")
-        tela.resizable(True, True)
+        tela.resizable(False, False)
         tela.configure(bg="#121212")
-        tela.geometry("460x560")
-        tela.minsize(420, 520)
+
+        # ✅ Ajustado para caber tudo
+        tela.geometry("420x500")
 
         tela.transient(self)
         tela.grab_set()
@@ -751,35 +712,45 @@ class MenuPrincipalApp(tk.Tk):
 
         tela.protocol("WM_DELETE_WINDOW", do_cancel)
 
-        outer = tk.Frame(tela, bg="#121212")
-        outer.pack(fill="both", expand=True)
-
-        sf = ScrollableFrame(outer, bg="#121212")
-        sf.pack(fill="both", expand=True)
-
-        frame = tk.Frame(sf.inner, bg="#121212", padx=18, pady=14)
+        frame = tk.Frame(tela, bg="#121212", padx=16, pady=12)
         frame.pack(fill="both", expand=True)
 
-        avatar_img = load_avatar_image(max_side=220)
+        candidatos = [
+            os.path.join(BASE_DIR, "imagens", "avatar_ekenox.png"),
+            os.path.join(BASE_DIR, "avatar_ekenox.png"),
+            os.path.join(BASE_DIR, "imagens", "Ekenox.png"),
+            os.path.join(BASE_DIR, "Ekenox.png"),
+        ]
+        avatar_path = next((p for p in candidatos if os.path.isfile(p)), None)
+        avatar_img = None
+        if avatar_path:
+            try:
+                img = tk.PhotoImage(file=avatar_path)
+                w, h = img.width(), img.height()
+                maior = max(w, h)
+                max_logo = 160  # ✅ menor para caber
+                if maior > max_logo:
+                    fator = max(1, int(maior / max_logo))
+                    img = img.subsample(fator, fator)
+                avatar_img = img
+            except Exception:
+                avatar_img = None
+
         if avatar_img:
             lbl_img = tk.Label(frame, image=avatar_img, bg="#121212")
             lbl_img.image = avatar_img
-            lbl_img.pack(pady=(0, 10))
+            lbl_img.pack(pady=(0, 8))
         else:
             tk.Label(frame, text="EKENOX", bg="#121212", fg="#ff9f1a",
-                     font=("Segoe UI", 20, "bold")).pack(pady=(0, 10))
+                     font=("Segoe UI", 18, "bold")).pack(pady=(0, 8))
 
         tk.Label(frame, text="Sistema - Menu Principal", bg="#121212",
-                 fg="#ffffff", font=("Segoe UI", 12, "bold")).pack()
+                 fg="#ffffff", font=("Segoe UI", 11, "bold")).pack()
 
         status = "Conectado ao banco" if self.connected else f"ERRO BD: {self.db_err}"
-        tk.Label(
-            frame,
-            text=status,
-            bg="#121212",
-            fg=("#34d399" if self.connected else "#f87171"),
-            font=("Segoe UI", 9, "bold"),
-        ).pack(pady=(6, 14))
+        tk.Label(frame, text=status, bg="#121212",
+                 fg=("#34d399" if self.connected else "#f87171"),
+                 font=("Segoe UI", 9, "bold")).pack(pady=(6, 12))
 
         form = tk.Frame(frame, bg="#121212")
         form.pack(fill="x")
@@ -790,35 +761,24 @@ class MenuPrincipalApp(tk.Tk):
         tk.Label(form, text="E-mail:", bg="#121212", fg="#e5e7eb",
                  font=("Segoe UI", 10)).pack(anchor="w")
         ent_email = tk.Entry(
-            form,
-            textvariable=var_email,
-            bg="#0b0b0b",
-            fg="#ffffff",
-            insertbackground="#ffffff",
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground="#2a2a2a",
-            highlightcolor="#ff9f1a",
+            form, textvariable=var_email,
+            bg="#0b0b0b", fg="#ffffff", insertbackground="#ffffff",
+            relief="flat", highlightthickness=1,
+            highlightbackground="#2a2a2a", highlightcolor="#ff9f1a",
             font=("Segoe UI", 11),
         )
-        ent_email.pack(fill="x", pady=(6, 12))
+        ent_email.pack(fill="x", pady=(6, 10))
 
         tk.Label(form, text="Senha:", bg="#121212", fg="#e5e7eb",
                  font=("Segoe UI", 10)).pack(anchor="w")
         ent_senha = tk.Entry(
-            form,
-            textvariable=var_senha,
-            show="*",
-            bg="#0b0b0b",
-            fg="#ffffff",
-            insertbackground="#ffffff",
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground="#2a2a2a",
-            highlightcolor="#ff9f1a",
+            form, textvariable=var_senha, show="*",
+            bg="#0b0b0b", fg="#ffffff", insertbackground="#ffffff",
+            relief="flat", highlightthickness=1,
+            highlightbackground="#2a2a2a", highlightcolor="#ff9f1a",
             font=("Segoe UI", 11),
         )
-        ent_senha.pack(fill="x", pady=(6, 10))
+        ent_senha.pack(fill="x", pady=(6, 8))
 
         def do_login(event=None) -> None:
             if not self.connected:
@@ -868,12 +828,13 @@ class MenuPrincipalApp(tk.Tk):
                 messagebox.showerror("Erro", f"Falha no login:\n{e}")
 
         botoes = tk.Frame(frame, bg="#121212")
-        botoes.pack(fill="x", pady=(14, 0))
+        botoes.pack(fill="x", pady=(12, 0))
 
         btn_entrar = ttk.Button(botoes, text="Entrar", command=do_login)
         btn_entrar.pack(side="left", expand=True, fill="x", padx=(0, 8))
         ttk.Button(botoes, text="Cancelar", command=do_cancel).pack(
-            side="left", expand=True, fill="x")
+            side="left", expand=True, fill="x"
+        )
 
         if not self.connected:
             try:
@@ -889,9 +850,10 @@ class MenuPrincipalApp(tk.Tk):
         self._bring_to_front(tela)
         self.wait_window(tela)
 
-    # ---------------- UI ----------------
+    # ---------------- UI (Cadastro / Movimento / Sistema) ----------------
 
     def _build_ui(self) -> None:
+        # ----- MENUBAR -----
         menubar = tk.Menu(self)
 
         m_cadastro = tk.Menu(menubar, tearoff=0)
@@ -910,10 +872,11 @@ class MenuPrincipalApp(tk.Tk):
             m_movimento.add_command(
                 label=p["nome"], command=lambda pp=p: self.open_program(pp))
 
-        m_sistema.add_command(label="Usuários (Cadastro/Permissões)",
-                              command=lambda: open_tela_usuarios(self))
+        # ✅ Sistema
+        m_sistema.add_command(label="Usuários e Acessos",
+                              command=self._open_usuarios_acesso)
         m_sistema.add_command(label="Reset de Senha",
-                              command=lambda: open_reset_senha(self))
+                              command=self._open_reset_senha)
         m_sistema.add_separator()
         m_sistema.add_command(label="Sair", command=self.on_closing)
 
@@ -923,6 +886,7 @@ class MenuPrincipalApp(tk.Tk):
 
         self.config(menu=menubar)
 
+        # ----- CORPO -----
         main = ttk.Frame(self, padding=12)
         main.pack(fill="both", expand=True)
 
@@ -942,6 +906,7 @@ class MenuPrincipalApp(tk.Tk):
 
         ttk.Separator(main, orient="horizontal").pack(fill="x", pady=12)
 
+        # Frames separados
         grp_cad = ttk.LabelFrame(main, text="Cadastro", padding=10)
         grp_mov = ttk.LabelFrame(main, text="Movimento", padding=10)
         grp_cad.pack(fill="x", pady=(0, 10))
@@ -978,102 +943,37 @@ class MenuPrincipalApp(tk.Tk):
         add_buttons(grp_cad, cad_items)
         add_buttons(grp_mov, mov_items)
 
-    # ---------------- abrir programas (AGORA VOLTA AO MENU) ----------------
-
-    def run_child_program(self, titulo: str, arquivo_hint: str, extra_args: List[str], *, termo_permissao: str) -> None:
-        if self._closing:
-            return
-
-        if not self.connected:
-            messagebox.showerror("Banco de Dados", "Sem conexão com o banco.")
-            return
-
-        # Permissão
-        uid = int(self.user["usuarioId"]) if self.user and self.user.get(
-            "usuarioId") else 0
-        if uid > 0:
-            nivel, cadastrado = fetch_user_nivel_por_programa(
-                self.cfg, uid, termo_permissao)
-            if not cadastrado:
-                log(f'AVISO: programa "{termo_permissao}" não encontrado em Ekenox.programas. Abrindo mesmo assim (nível default=1).')
-            else:
-                if nivel <= 0:
-                    messagebox.showerror(
-                        "Permissão", f"Acesso negado.\n\nPrograma: {termo_permissao}\nUsuário ID: {uid}\nNível: 0")
-                    return
-
-        # resolve arquivo .py/.exe
-        resolved = resolve_program_file(arquivo_hint)
-        if not resolved:
-            messagebox.showerror(
-                "Abrir", f"Não encontrei o programa:\n{arquivo_hint}\n\nTentei também .py/.exe em APP_DIR e BASE_DIR.")
-            return
-
-        # garante que vai passar usuario-id para todos
-        if uid > 0 and "--usuario-id" not in extra_args and "--uid" not in extra_args and "--user-id" not in extra_args:
-            extra_args = extra_args + ["--usuario-id", str(uid)]
-
-        try:
-            cmd = build_run_cmd(resolved, extra_args=extra_args)
-            cwd = os.path.dirname(resolved) or APP_DIR
-
-            # oculta menu e abre filho
-            self._child_nome = titulo
-            self.withdraw()
-
-            self._child_proc = subprocess.Popen(cmd, cwd=cwd)
-            self.after(300, self._poll_child)
-
-        except Exception as e:
-            self._child_proc = None
-            self._child_nome = ""
-            self.deiconify()
-            log(f"Falha ao abrir {titulo}: {type(e).__name__}: {e}")
-            messagebox.showerror("Abrir", f"Falha ao abrir {titulo}:\n{e}")
-
-    def _poll_child(self) -> None:
-        if not self._child_proc:
-            self._show_menu()
-            return
-
-        try:
-            if self._child_proc.poll() is None:
-                self.after(300, self._poll_child)
-                return
-        except Exception:
-            pass
-
-        # filho terminou -> volta menu
-        self._child_proc = None
-        self._child_nome = ""
-        self._show_menu()
+    # ---------------- abrir programas ----------------
 
     def open_program(self, programa: Dict[str, Any]) -> None:
         nome = programa.get("nome", "Programa")
         arquivo = programa.get("arquivo", "")
-        termo = programa.get("termo_permissao") or nome
+        tipo = (programa.get("tipo") or "").lower()
 
         if not arquivo:
             messagebox.showerror("Abrir", f"Arquivo não definido para {nome}.")
             return
 
-        extra_args: List[str] = []
-        uid = int(self.user["usuarioId"]) if self.user and self.user.get(
-            "usuarioId") else 0
-        if uid > 0:
-            extra_args = ["--usuario-id", str(uid)]
+        if not os.path.isfile(arquivo):
+            messagebox.showerror("Abrir", f"Não encontrei:\n{arquivo}")
+            return
 
-        self.run_child_program(nome, arquivo, extra_args,
-                               termo_permissao=str(termo))
+        try:
+            cwd = os.path.dirname(arquivo) or APP_DIR
 
-    def _log_programas_faltando(self) -> None:
-        faltando: List[str] = []
-        for p in PROGRAMAS:
-            arq = p.get("arquivo", "")
-            if not resolve_program_file(arq):
-                faltando.append(f'{p.get("menu")} -> {p.get("nome")} ({arq})')
-        if faltando:
-            log("PROGRAMAS FALTANDO:\n" + "\n".join(faltando))
+            if tipo == "exe":
+                if os.name == "nt":
+                    os.startfile(arquivo)  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen([arquivo], cwd=cwd)
+            else:
+                cmd = build_run_cmd(arquivo)
+                subprocess.Popen(cmd, cwd=cwd)
+
+            self.after(150, self.destroy)
+
+        except Exception as e:
+            messagebox.showerror("Abrir", f"Falha ao abrir {nome}:\n{e}")
 
     # ---------------- fechar ----------------
 

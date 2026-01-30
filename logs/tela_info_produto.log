@@ -70,3 +70,31 @@ TABELA OK: "Ekenox"."infoProduto"
 TABELA OK: "Ekenox"."produtos"
 TABELA OK: "Ekenox"."infoProduto"
 TABELA OK: "Ekenox"."produtos"
+[2026-01-30 13:10:54] ARGV: ['c:/Users/User/Desktop/Pyton/OrdemProducao/tela_info_produto.py']
+[2026-01-30 13:10:54] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:10:54] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:11:23] ARGV: ['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_info_produto.py', '--usuario-id', '1']
+[2026-01-30 13:11:23] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:11:23] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:11:23] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 13:11:24] ACESSO: sem registro em usuario_programa. user_id=1 programa=INFO_PRODUTO
+[2026-01-30 13:11:52] ARGV: ['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_info_produto.py', '--usuario-id', '1']
+[2026-01-30 13:11:52] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:11:52] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:11:52] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 13:11:52] ACESSO: user_id=1 programa=INFO_PRODUTO nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 13:12:39] ARGV: ['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_info_produto.py', '--usuario-id', '1']
+[2026-01-30 13:12:39] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:12:39] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:12:39] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 13:12:39] ACESSO: user_id=1 programa=INFO_PRODUTO nivel=2 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 13:12:55] ARGV: ['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_info_produto.py', '--usuario-id', '1']
+[2026-01-30 13:12:55] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:12:55] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:12:55] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 13:12:55] ACESSO: user_id=1 programa=INFO_PRODUTO nivel=2 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 13:13:44] ARGV: ['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_info_produto.py', '--usuario-id', '1']
+[2026-01-30 13:13:44] FLAGS: from_menu_arg=False env_from_menu=None
+[2026-01-30 13:13:44] ENV_USER: EKENOX_USER_ID=None USER_ID=None USUARIO_ID=None LOGGED_USER_ID=None
+[2026-01-30 13:13:44] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 13:13:45] ACESSO: user_id=1 programa=INFO_PRODUTO nivel=3 permitido_col=None permitido_val=True permitido=True
