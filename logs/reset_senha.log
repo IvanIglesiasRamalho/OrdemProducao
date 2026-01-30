@@ -13,3 +13,4 @@ load_config error: TypeError: AppConfig.__init__() got an unexpected keyword arg
 load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
 load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
 load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'

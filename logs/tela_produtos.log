@@ -224,3 +224,109 @@ argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
 WM_DELETE_WINDOW: acionado
 MENU: iniciado -> c:\Users\User\Desktop\Pyton\OrdemProducao\menu_principal.py
 WM_DELETE_WINDOW: abrir_menu_principal_skip_entrada() -> True
+[2026-01-30 14:00:08] === START tela_produtos ===
+[2026-01-30 14:00:08] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:00:08] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:00:08] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:00:08] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:00:08] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:00:08] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:00:08] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:00:08] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:00:44] === START tela_produtos ===
+[2026-01-30 14:00:44] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:00:44] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:00:44] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:00:44] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:00:44] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:00:44] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:00:45] ACESSO: user_id=1 programa=PRODUTOS nivel=2 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:00:45] ACESSO_FINAL: nivel=2 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:01:27] === START tela_produtos ===
+[2026-01-30 14:01:27] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:01:27] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:01:27] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:01:27] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:01:27] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:01:27] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:01:28] ACESSO: user_id=1 programa=PRODUTOS nivel=3 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:01:28] ACESSO_FINAL: nivel=3 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:02:45] === START tela_produtos ===
+[2026-01-30 14:02:45] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:02:45] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:02:45] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:02:45] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:02:45] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:02:45] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:02:45] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:02:45] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:21:12] === START tela_produtos ===
+[2026-01-30 14:21:12] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:21:12] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:21:12] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:21:12] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:21:12] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:21:12] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:21:13] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:21:13] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:21:29] === START tela_produtos ===
+[2026-01-30 14:21:29] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:21:29] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:21:29] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:21:29] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:21:29] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:21:29] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:21:30] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:21:30] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:30:25] === START tela_produtos ===
+[2026-01-30 14:30:25] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:30:25] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:30:25] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:30:25] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:30:25] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:30:26] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:30:26] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:30:26] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho'
+[2026-01-30 14:30:49] === START tela_produtos ===
+[2026-01-30 14:30:49] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:30:49] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:30:49] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:30:49] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:30:49] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:30:50] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:30:51] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:30:51] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho' from_menu=True
+[2026-01-30 14:39:00] === START tela_produtos ===
+[2026-01-30 14:39:00] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:39:00] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:39:00] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+[2026-01-30 14:39:00] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:39:00] ARGV=['c:/Users/User/Desktop/Pyton/OrdemProducao/tela_produtos.py']
+[2026-01-30 14:39:01] ACESSO_FINAL: nivel=0 origem=sem_usuario usuario_id=None nome=None from_menu=True
+[2026-01-30 14:49:09] === START tela_produtos ===
+[2026-01-30 14:49:09] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:49:09] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:49:09] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:49:09] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:49:09] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:49:10] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:49:11] ACESSO: user_id=1 programa=PRODUTOS nivel=1 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:49:11] ACESSO_FINAL: nivel=1 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho' from_menu=True
+[2026-01-30 14:49:53] === START tela_produtos ===
+[2026-01-30 14:49:53] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:49:53] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:49:53] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:49:53] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:49:53] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:49:54] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:49:55] ACESSO: user_id=1 programa=PRODUTOS nivel=2 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:49:55] ACESSO_FINAL: nivel=2 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho' from_menu=True
+[2026-01-30 14:50:36] === START tela_produtos ===
+[2026-01-30 14:50:36] APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:50:36] BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+[2026-01-30 14:50:36] sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+[2026-01-30 14:50:36] argv0=c:\Users\User\Desktop\Pyton\OrdemProducao\tela_produtos.py
+[2026-01-30 14:50:36] ARGV=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\tela_produtos.py', '--usuario-id', '1']
+[2026-01-30 14:50:37] RESOLVE: user_id via argumento/env = 1
+[2026-01-30 14:50:38] ACESSO: user_id=1 programa=PRODUTOS nivel=3 permitido_col=None permitido_val=True permitido=True
+[2026-01-30 14:50:38] ACESSO_FINAL: nivel=3 origem=db usuario_id=1 nome='Ivan Iglesias Ramalho' from_menu=True

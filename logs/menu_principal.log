@@ -3256,3 +3256,51 @@ argv=['c:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--sk
 show_entrada(cli)=False
 has_session_skip_entrada=False
 load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv=['c:/Users/User/Desktop/Pyton/OrdemProducao/menu_principal.py']
+show_entrada(cli)=True
+has_session_skip_entrada=False
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv=['c:/Users/User/Desktop/Pyton/OrdemProducao/menu_principal.py']
+show_entrada(cli)=True
+has_session_skip_entrada=False
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv=['c:/Users/User/Desktop/Pyton/OrdemProducao/menu_principal.py']
+show_entrada(cli)=True
+has_session_skip_entrada=False
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\pythonw.exe
+argv=['C:\\Users\\User\\Desktop\\Pyton\\OrdemProducao\\menu_principal.py', '--skip-entrada']
+show_entrada(cli)=False
+has_session_skip_entrada=True
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv=['c:/Users/User/Desktop/Pyton/OrdemProducao/menu_principal.py']
+show_entrada(cli)=True
+has_session_skip_entrada=False
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
+=== START menu_principal ===
+APP_DIR=c:\Users\User\Desktop\Pyton\OrdemProducao
+BASE_DIR=C:\Users\User\Desktop\Pyton\OrdemProducao
+sys.executable=C:\Users\User\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+argv=['c:/Users/User/Desktop/Pyton/OrdemProducao/menu_principal.py']
+show_entrada(cli)=True
+has_session_skip_entrada=False
+load_config error: TypeError: AppConfig.__init__() got an unexpected keyword argument 'excel_path'
